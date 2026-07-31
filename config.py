@@ -11,7 +11,7 @@ config.py — Central configuration for the RTL Verification Agent.
               │ For UI development, frontend testing, and
               │ benchmark harness rehearsal.
  ─────────────┼───────────────────────────────────────────────
- "amd-api"    │ Free AMD Developer API (Qwen3.6-35B-A3B).
+ "amd-api"    │ Free AMD Developer API (Qwen/Qwen2.5-Coder-7B-Instruct).
               │ Zero credits. Full two-tier agent loop with
               │ a 35B model. For local dev and real testing
               │ before cloud deployment.
@@ -55,10 +55,10 @@ MOCK_MODE: bool = (DEPLOY_MODE == "mock")
 # Free public API: zero credits, 35B model, no GPU required locally.
 # Dedicated API: runs on AMD cloud GPU, required for Track 2 points.
 _AMD_API_ENDPOINTS = {
-    # Phase 1: Free public API (Qwen3.6-35B-A3B, DeepSeek-V4-Flash)
+    # Phase 1: Free public API (Qwen/Qwen2.5-Coder-7B-Instruct, DeepSeek-V4-Flash)
     "amd-api": {
         "base_url": "https://developer.amd.com.cn/radeon/api/v1",
-        "model":    "Qwen3.6-35B-A3B",
+        "model":    "Qwen/Qwen2.5-Coder-7B-Instruct",
         "api_key":  os.getenv("AMD_API_KEY", ""),  # paste from AMD dev portal
     },
     # Fallback: DeepSeek on AMD free API (elite coding, if Qwen throttled)
@@ -137,7 +137,7 @@ def print_config():
     """Print resolved configuration for debugging."""
     mode_labels = {
         "mock":         "MOCK (demo, no LLM)",
-        "amd-api":      "AMD FREE API (Qwen3.6-35B-A3B, zero credits)",
+        "amd-api":      "AMD FREE API (Qwen/Qwen2.5-Coder-7B-Instruct, zero credits)",
         "amd-deepseek": "AMD FREE API (DeepSeek-V4-Flash, zero credits)",
         "vllm":         "DEDICATED vLLM on AMD ROCm (local GPU)",
     }

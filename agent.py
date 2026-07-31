@@ -55,8 +55,8 @@ if not MOCK_MODE:
         _timeout = 180.0 if DEPLOY_MODE == "amd-api" else 120.0
 
         _llm_client = AsyncOpenAI(
-            base_url=VLLM_BASE_URL,
-            api_key=VLLM_API_KEY,
+            base_url="http://127.0.0.1:8000/v1",
+            api_key="sk-dummy",
             timeout=_timeout,
         )
     except ImportError as e:
