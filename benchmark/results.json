@@ -1,12 +1,12 @@
 {
   "meta": {
-    "run_date": "2026-07-31T05:12:28.927484+00:00",
+    "run_date": "2026-08-01T16:18:30.752204+00:00",
     "base_url": "http://localhost:7860",
     "model": "Qwen/Qwen2.5-Coder-7B-Instruct",
     "mode": "REAL",
     "specs_file": "/workspace/rtl_agent/benchmark/specs.json",
     "specs_completed": 8,
-    "total_wall_s": 176.63
+    "total_wall_s": 225.3
   },
   "results": [
     {
@@ -19,12 +19,12 @@
       "lint_iterations": 3,
       "functional_iterations": 0,
       "total_iterations": 3,
-      "wall_clock_s": 15.87,
-      "tokens_generated": 688,
-      "avg_tokens_per_s": 43.8,
+      "wall_clock_s": 20.23,
+      "tokens_generated": 609,
+      "avg_tokens_per_s": 30.1,
       "error": null,
-      "timestamp": "2026-07-31T05:12:28.927505+00:00",
-      "avg_ttft_ms": 802.3
+      "timestamp": "2026-08-01T16:18:30.752223+00:00",
+      "avg_ttft_ms": 536.3
     },
     {
       "id": 2,
@@ -36,12 +36,12 @@
       "lint_iterations": 3,
       "functional_iterations": 0,
       "total_iterations": 3,
-      "wall_clock_s": 14.99,
-      "tokens_generated": 738,
-      "avg_tokens_per_s": 49.7,
+      "wall_clock_s": 16.52,
+      "tokens_generated": 519,
+      "avg_tokens_per_s": 31.4,
       "error": null,
-      "timestamp": "2026-07-31T05:12:44.796472+00:00",
-      "avg_ttft_ms": 245.0
+      "timestamp": "2026-08-01T16:18:50.984624+00:00",
+      "avg_ttft_ms": 207.0
     },
     {
       "id": 3,
@@ -53,46 +53,46 @@
       "lint_iterations": 3,
       "functional_iterations": 0,
       "total_iterations": 3,
-      "wall_clock_s": 10.3,
-      "tokens_generated": 504,
-      "avg_tokens_per_s": 49.6,
+      "wall_clock_s": 12.63,
+      "tokens_generated": 393,
+      "avg_tokens_per_s": 31.1,
       "error": null,
-      "timestamp": "2026-07-31T05:12:59.788039+00:00",
-      "avg_ttft_ms": 215.1
+      "timestamp": "2026-08-01T16:19:07.502014+00:00",
+      "avg_ttft_ms": 199.0
     },
     {
       "id": 4,
       "name": "Traffic Light FSM",
       "spec": "A Moore FSM traffic light controller with three states: GREEN (10 cycles), YELLO\u2026",
       "status": "FAIL",
-      "lint_status": "NOT_RUN",
+      "lint_status": "FAILED",
       "functional_status": "NOT_RUN",
-      "lint_iterations": 2,
+      "lint_iterations": 3,
       "functional_iterations": 0,
       "total_iterations": 3,
-      "wall_clock_s": 30.94,
-      "tokens_generated": 1288,
-      "avg_tokens_per_s": 51.9,
+      "wall_clock_s": 42.24,
+      "tokens_generated": 1347,
+      "avg_tokens_per_s": 31.9,
       "error": null,
-      "timestamp": "2026-07-31T05:13:10.087981+00:00",
-      "avg_ttft_ms": 263.2
+      "timestamp": "2026-08-01T16:19:20.132699+00:00",
+      "avg_ttft_ms": 268.1
     },
     {
       "id": 5,
       "name": "Synchronous FIFO",
       "spec": "A synchronous FIFO with parameterized DATA_WIDTH (default 8) and DEPTH (default \u2026",
       "status": "FAIL",
-      "lint_status": "NOT_RUN",
+      "lint_status": "FAILED",
       "functional_status": "NOT_RUN",
-      "lint_iterations": 2,
+      "lint_iterations": 3,
       "functional_iterations": 0,
       "total_iterations": 3,
-      "wall_clock_s": 30.26,
-      "tokens_generated": 1236,
-      "avg_tokens_per_s": 51.2,
+      "wall_clock_s": 43.52,
+      "tokens_generated": 1386,
+      "avg_tokens_per_s": 31.9,
       "error": null,
-      "timestamp": "2026-07-31T05:13:41.024184+00:00",
-      "avg_ttft_ms": 261.4
+      "timestamp": "2026-08-01T16:20:02.369075+00:00",
+      "avg_ttft_ms": 296.9
     },
     {
       "id": 6,
@@ -104,12 +104,12 @@
       "lint_iterations": 2,
       "functional_iterations": 0,
       "total_iterations": 3,
-      "wall_clock_s": 27.34,
-      "tokens_generated": 1108,
-      "avg_tokens_per_s": 52.3,
+      "wall_clock_s": 38.27,
+      "tokens_generated": 1230,
+      "avg_tokens_per_s": 32.2,
       "error": null,
-      "timestamp": "2026-07-31T05:14:11.280982+00:00",
-      "avg_ttft_ms": 263.8
+      "timestamp": "2026-08-01T16:20:45.888412+00:00",
+      "avg_ttft_ms": 255.8
     },
     {
       "id": 7,
@@ -121,12 +121,12 @@
       "lint_iterations": 2,
       "functional_iterations": 0,
       "total_iterations": 3,
-      "wall_clock_s": 29.81,
-      "tokens_generated": 1212,
-      "avg_tokens_per_s": 51.2,
+      "wall_clock_s": 29.07,
+      "tokens_generated": 932,
+      "avg_tokens_per_s": 32.1,
       "error": null,
-      "timestamp": "2026-07-31T05:14:38.617669+00:00",
-      "avg_ttft_ms": 317.9
+      "timestamp": "2026-08-01T16:21:24.160906+00:00",
+      "avg_ttft_ms": 238.6
     },
     {
       "id": 8,
@@ -138,12 +138,12 @@
       "lint_iterations": 3,
       "functional_iterations": 0,
       "total_iterations": 3,
-      "wall_clock_s": 17.13,
-      "tokens_generated": 843,
-      "avg_tokens_per_s": 49.6,
+      "wall_clock_s": 22.83,
+      "tokens_generated": 723,
+      "avg_tokens_per_s": 31.7,
       "error": null,
-      "timestamp": "2026-07-31T05:15:08.426889+00:00",
-      "avg_ttft_ms": 263.3
+      "timestamp": "2026-08-01T16:21:53.227277+00:00",
+      "avg_ttft_ms": 217.1
     }
   ]
 }
