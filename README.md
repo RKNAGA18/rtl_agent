@@ -196,7 +196,7 @@ chmod +x scripts/vllm_launch.sh
 
 # Step 3: Start RTL-Agent — MUST set DEPLOY_MODE=vllm explicitly
 export DEPLOY_MODE=vllm
-export MODEL_NAME=vLLM-Qwen3
+export MODEL_NAME=Qwen/Qwen2.5-Coder-7B-Instruct
 python agent_server.py
 
 # Step 4: Run benchmark with time budget
@@ -219,10 +219,10 @@ python benchmark/rocm_bench.py --report   # → benchmark/rocm_results.md
 
 | Phase | Mode | Model | Verified | Why |
 |---|---|---|---|---|
-| **Local dev (recommended)** | `deepseek` | `deepseek-coder` | ✅ Yes | Documented API, inexpensive, elite RTL code generation. Validates prompts + parser before GPU window. |
-| **AMD API (optional)** | `amd-api` | `Qwen3.6-35B-A3B` | ⚠ Check | 35B params, strong RTL. But verify AMD actually provides a hosted inference API before using. |
-| **AMD API fallback** | `amd-deepseek` | `DeepSeek-V4-Flash` | ⚠ Check | Same caveat — verify AMD endpoint first. |
-| **Final submission** | `vllm` | `vLLM-Qwen3` | ✅ Self-hosted | Local AMD GPU inference. `MiniCPM5-1B` is too small for RTL. Must set `DEPLOY_MODE=vllm` explicitly. |
+| **Local dev (recommended)** | `deepseek` | `deepseek-coder` | ✅ Yes | Documented API, inexpensive, elite RTL code generation. Validates the full prompt + parser pipeline before touching GPU credits. |
+| **AMD API (optional)** | `amd-api` | `Qwen/Qwen2.5-Coder-7B-Instruct` | ⚠ Verify | Strong RTL coder. Confirm AMD actually provides a hosted inference API at the portal before using this mode. |
+| **AMD API fallback** | `amd-deepseek` | `deepseek-coder` | ⚠ Verify | Same AMD endpoint caveat applies. |
+| **Final submission** | `vllm` | `Qwen/Qwen2.5-Coder-7B-Instruct` | ✅ Self-hosted | Local AMD ROCm GPU inference via vLLM. Must set `DEPLOY_MODE=vllm` explicitly — never rely on auto-promotion. |
 
 ---
 

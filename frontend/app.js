@@ -89,7 +89,7 @@ async function loadConfig() {
       const labels = {
         'mock':         'MOCK MODE',
         'deepseek':     'DeepSeek · deepseek-coder',
-        'amd-api':      'AMD API · Qwen3.6-35B ⚠',
+        'amd-api':      'AMD API · Qwen2.5-Coder-7B ⚠',
         'amd-deepseek': 'AMD API · DeepSeek-V4 ⚠',
         'vllm':         'LIVE · AMD ROCm vLLM',
       };
