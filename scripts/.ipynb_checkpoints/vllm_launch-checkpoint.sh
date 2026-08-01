@@ -97,7 +97,7 @@ COMMON_FLAGS=(
                              # architectures — fp16 is always safe.
     --max-model-len 8192     # covers full rolling context (sys prompt + code + errors × 3)
     --trust-remote-code      # required for Qwen2.5-Coder tokenizer
-    --served-model-name Qwen/Qwen2.5-Coder-7B-Instruct  # fixed alias — agent_server.py doesn't need updating
+    --served-model-name rtl-agent-model  # fixed alias — agent_server.py doesn't need updating
 )
 
 # ─── Mode-specific flags ───────────────────────────────────────────────────────
