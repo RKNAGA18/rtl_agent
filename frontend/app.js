@@ -88,12 +88,13 @@ async function loadConfig() {
       const dm = state.config.deploy_mode || (state.config.mock_mode ? 'mock' : 'vllm');
       const labels = {
         'mock':         'MOCK MODE',
-        'amd-api':      'AMD API · ' + (state.config.model || 'Qwen3.6-35B-A3B'),
-        'amd-deepseek': 'AMD API · DeepSeek-V4',
+        'deepseek':     'DeepSeek · deepseek-coder',
+        'amd-api':      'AMD API · Qwen3.6-35B ⚠',
+        'amd-deepseek': 'AMD API · DeepSeek-V4 ⚠',
         'vllm':         'LIVE · AMD ROCm vLLM',
       };
       modeBadge.textContent = labels[dm] || ('LIVE · ' + dm);
-      modeBadge.className = 'mode-badge ' + (dm === 'mock' ? 'mock' : 'real');
+      modeBadge.className   = 'mode-badge ' + (dm === 'mock' ? 'mock' : 'real');
     }
   } catch (_) {}
 }

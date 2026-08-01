@@ -5,69 +5,94 @@ config.py — Central configuration for the RTL Verification Agent.
  DEPLOYMENT MODES (single env var switch)
 ═══════════════════════════════════════════════════════════════
 
- DEPLOY_MODE  │ What it does
- ─────────────┼───────────────────────────────────────────────
- "mock"       │ No LLM, no GPU. Pre-scripted demo responses.
-              │ For UI development, frontend testing, and
-              │ benchmark harness rehearsal.
- ─────────────┼───────────────────────────────────────────────
- "amd-api"    │ Free AMD Developer API (Qwen3.6-35B-A3B).
-              │ Zero credits. Full two-tier agent loop with
-              │ a 35B model. For local dev and real testing
-              │ before cloud deployment.
- ─────────────┼───────────────────────────────────────────────
- "vllm"       │ Dedicated vLLM on AMD ROCm (vLLM-Qwen3).
-              │ Local GPU inference. For the final hackathon
-              │ submission — proves AMD hardware acceleration.
- ─────────────┼───────────────────────────────────────────────
+ DEPLOY_MODE  │ LLM Endpoint                          │ Notes
+ ─────────────┼───────────────────────────────────────┼──────────────────────
+ "mock"       │ None (pre-scripted)                   │ Zero deps, demo
+ ─────────────┼───────────────────────────────────────┼──────────────────────
+ "deepseek"   │ DeepSeek API (api.deepseek.com)       │ RECOMMENDED for local
+              │ Model: deepseek-coder                 │ dev. Real LLM, cheap,
+              │ Key:   DEEPSEEK_API_KEY               │ fully documented API.
+ ─────────────┼───────────────────────────────────────┼──────────────────────
+ "amd-api"    │ AMD Developer Portal API              │ ⚠ UNVERIFIED: confirm
+              │ Model: Qwen3.6-35B-A3B                │ the portal actually
+              │ Key:   AMD_API_KEY                    │ provides a hosted
+              │ URL:   developer.amd.com.cn/radeon/.. │ inference API before
+              │                                       │ using this mode.
+ ─────────────┼───────────────────────────────────────┼──────────────────────
+ "amd-deepseek"│ AMD Portal, DeepSeek-V4-Flash model  │ ⚠ Same caveat as above
+ ─────────────┼───────────────────────────────────────┼──────────────────────
+ "vllm"       │ Local vLLM on AMD ROCm                │ FINAL SUBMISSION.
+              │ Model: vLLM-Qwen3 (or MODEL_NAME)     │ Proves local GPU
+              │ URL:   localhost:8000/v1               │ inference on AMD hw.
+ ─────────────┼───────────────────────────────────────┼──────────────────────
 
- Switch with:
-   set DEPLOY_MODE=mock         # Windows
-   export DEPLOY_MODE=amd-api   # Linux
+ Switch:
+   export DEPLOY_MODE=deepseek   # Linux/Mac
+   $env:DEPLOY_MODE="deepseek"   # PowerShell
+
+ IMPORTANT — read before using DEPLOY_MODE=vllm on AMD cloud:
+   Always set DEPLOY_MODE=vllm explicitly on the AMD instance.
+   Do NOT rely on MOCK_MODE=false auto-promotion (which defaults to
+   "deepseek", not "vllm") — if you forget to set DEPLOY_MODE=vllm,
+   your "ROCm optimization" benchmark numbers would actually come from
+   a remote API, not local GPU inference, undermining the 40-pt rubric.
 
 ROCm/vLLM optimization knobs (40-point rubric bucket):
-  ENABLE_PREFIX_CACHING  — caches KV blocks for shared prefixes across iterations.
-  GPU_MEMORY_UTILIZATION — fraction of VRAM allocated to KV cache (0.0-1.0).
-  MAX_NUM_SEQS           — concurrent sequences vLLM can handle (throughput tuning).
-  QUANTIZATION           — '' (fp16), 'awq' (int4 AWQ), or 'gptq' (GPTQ int4/int8).
-  VLLM_DTYPE             — model weight dtype: 'float16', 'bfloat16', or 'auto'.
-  TENSOR_PARALLEL_SIZE   — number of GPUs for tensor parallelism (1 for single GPU).
+  ENABLE_PREFIX_CACHING  — caches KV blocks for shared prefixes.
+  GPU_MEMORY_UTILIZATION — fraction of VRAM for KV cache (0.0-1.0).
+  MAX_NUM_SEQS           — concurrent sequences (throughput tuning).
+  QUANTIZATION           — '' (fp16), 'awq' (int4 AWQ), 'gptq' (GPTQ int4/int8).
+  VLLM_DTYPE             — 'float16' (safe for all ROCm targets), 'bfloat16', 'auto'.
+  TENSOR_PARALLEL_SIZE   — GPUs for tensor parallelism (1 for single GPU).
 """
 
 import os
+import sys
 from pathlib import Path
 
 # ─── Deployment Mode ──────────────────────────────────────────────────────────
-# The single switch that controls everything: LLM endpoint, model, API key.
-# "mock" = pre-scripted (no LLM)  |  "amd-api" = free AMD API  |  "vllm" = local GPU
 DEPLOY_MODE: str = os.getenv("DEPLOY_MODE", "mock").lower().strip()
 
-# Backward compat: MOCK_MODE=true → deploy_mode="mock"
-if os.getenv("MOCK_MODE", "").lower() in ("true", "1", "yes"):
+# Backward compat: MOCK_MODE=true → "mock",  MOCK_MODE=false → "deepseek"
+# NOTE: MOCK_MODE=false promotes to "deepseek" (verified real API), NOT "amd-api"
+# (unverified). Set DEPLOY_MODE=vllm explicitly on AMD cloud — never rely on auto.
+_mock_env = os.getenv("MOCK_MODE", "").lower()
+if _mock_env in ("true", "1", "yes"):
     DEPLOY_MODE = "mock"
-elif os.getenv("MOCK_MODE", "").lower() in ("false", "0", "no"):
-    if DEPLOY_MODE == "mock":
-        DEPLOY_MODE = "amd-api"  # default real mode is the free API
+elif _mock_env in ("false", "0", "no") and DEPLOY_MODE == "mock":
+    DEPLOY_MODE = "deepseek"
 
 MOCK_MODE: bool = (DEPLOY_MODE == "mock")
 
-# ─── AMD Developer API Endpoints ─────────────────────────────────────────────
-# Free public API: zero credits, 35B model, no GPU required locally.
-# Dedicated API: runs on AMD cloud GPU, required for Track 2 points.
-_AMD_API_ENDPOINTS = {
-    # Phase 1: Free public API (Qwen3.6-35B-A3B, DeepSeek-V4-Flash)
+# ─── API Endpoint Definitions ─────────────────────────────────────────────────
+_ENDPOINTS = {
+    # ── Recommended for local dev: DeepSeek Coder ─────────────────────────────
+    # Real, documented, inexpensive API. DeepSeek-coder is elite at RTL.
+    # Get key at: https://platform.deepseek.com/api_keys
+    "deepseek": {
+        "base_url": "https://api.deepseek.com/v1",
+        "model":    "deepseek-coder",
+        "api_key":  os.getenv("DEEPSEEK_API_KEY", ""),
+    },
+
+    # ── AMD Developer Portal API (unverified — confirm before use) ─────────────
+    # AMD's hackathon compute access works via $100 AMD Developer Cloud credits
+    # for self-hosted vLLM on MI300X instances — it may NOT be a standing managed
+    # inference API with a portal-issued key. Verify at:
+    # https://www.amd.com/en/developer/resources/rocm-hub/ai-devmaster.html
     "amd-api": {
         "base_url": "https://developer.amd.com.cn/radeon/api/v1",
         "model":    "Qwen3.6-35B-A3B",
-        "api_key":  os.getenv("AMD_API_KEY", ""),  # paste from AMD dev portal
+        "api_key":  os.getenv("AMD_API_KEY", ""),
     },
-    # Fallback: DeepSeek on AMD free API (elite coding, if Qwen throttled)
     "amd-deepseek": {
         "base_url": "https://developer.amd.com.cn/radeon/api/v1",
         "model":    "DeepSeek-V4-Flash",
         "api_key":  os.getenv("AMD_API_KEY", ""),
     },
-    # Phase 2: Dedicated vLLM on AMD ROCm hardware (final submission)
+
+    # ── Local vLLM on AMD ROCm (final submission) ─────────────────────────────
+    # Must set DEPLOY_MODE=vllm explicitly on the AMD cloud instance.
     "vllm": {
         "base_url": os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1"),
         "model":    os.getenv("MODEL_NAME", "vLLM-Qwen3"),
@@ -75,83 +100,125 @@ _AMD_API_ENDPOINTS = {
     },
 }
 
-# ─── Resolve active endpoint ─────────────────────────────────────────────────
-def _resolve_endpoint():
-    """Pick the right endpoint config based on DEPLOY_MODE."""
-    if DEPLOY_MODE in _AMD_API_ENDPOINTS:
-        ep = _AMD_API_ENDPOINTS[DEPLOY_MODE]
-        return ep["base_url"], ep["api_key"], ep["model"]
 
-    # Direct override via env vars (backward compat)
-    return (
-        os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1"),
-        os.getenv("VLLM_API_KEY", "token-rtl-agent"),
-        os.getenv("MODEL_NAME", "Qwen/Qwen2.5-Coder-7B-Instruct"),
-    )
+def _resolve_endpoint():
+    """Pick endpoint config based on DEPLOY_MODE, with env-var overrides."""
+    if DEPLOY_MODE in _ENDPOINTS:
+        ep = _ENDPOINTS[DEPLOY_MODE]
+        base_url = ep["base_url"]
+        api_key  = ep["api_key"]
+        model    = ep["model"]
+    else:
+        # Unknown mode: fall back to direct env vars
+        base_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+        api_key  = os.getenv("VLLM_API_KEY",  "token-rtl-agent")
+        model    = os.getenv("MODEL_NAME",     "Qwen/Qwen2.5-Coder-7B-Instruct")
+
+    # Explicit env vars always win over mode defaults
+    if os.getenv("VLLM_BASE_URL"):
+        base_url = os.getenv("VLLM_BASE_URL")
+    if os.getenv("VLLM_API_KEY"):
+        api_key  = os.getenv("VLLM_API_KEY")
+    if os.getenv("MODEL_NAME"):
+        model    = os.getenv("MODEL_NAME")
+
+    # Key-specific overrides (highest priority)
+    if DEPLOY_MODE == "deepseek" and os.getenv("DEEPSEEK_API_KEY"):
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+    if DEPLOY_MODE in ("amd-api", "amd-deepseek") and os.getenv("AMD_API_KEY"):
+        api_key = os.getenv("AMD_API_KEY")
+
+    return base_url, api_key, model
 
 
 VLLM_BASE_URL, VLLM_API_KEY, MODEL_NAME = _resolve_endpoint()
 
-# Allow explicit overrides to win over mode defaults
-if os.getenv("VLLM_BASE_URL"):
-    VLLM_BASE_URL = os.getenv("VLLM_BASE_URL")
-if os.getenv("VLLM_API_KEY"):
-    VLLM_API_KEY = os.getenv("VLLM_API_KEY")
-if os.getenv("MODEL_NAME"):
-    MODEL_NAME = os.getenv("MODEL_NAME")
+MAX_TOKENS:   int   = int(os.getenv("MAX_TOKENS",   "4096"))
+TEMPERATURE:  float = float(os.getenv("TEMPERATURE", "0.05"))  # near-zero for deterministic RTL
 
-MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "4096"))
-TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.05"))  # Near-zero for deterministic code
+# ─── Agent Iteration Limits ───────────────────────────────────────────────────
+MAX_LINT_ITERATIONS:         int = int(os.getenv("MAX_LINT_ITERATIONS",         "3"))
+MAX_FUNCTIONAL_ITERATIONS:   int = int(os.getenv("MAX_FUNCTIONAL_ITERATIONS",   "3"))
+MAX_TOTAL_ITERATIONS:        int = int(os.getenv("MAX_TOTAL_ITERATIONS",        "6"))
+MAX_ITERATIONS:              int = MAX_LINT_ITERATIONS  # backward-compat alias
 
-# ─── Agent Configuration ──────────────────────────────────────────────────────
-MAX_LINT_ITERATIONS: int = int(os.getenv("MAX_LINT_ITERATIONS", "3"))
-MAX_FUNCTIONAL_ITERATIONS: int = int(os.getenv("MAX_FUNCTIONAL_ITERATIONS", "3"))
-MAX_TOTAL_ITERATIONS: int = int(os.getenv("MAX_TOTAL_ITERATIONS", "6"))
-
-# Legacy alias for backward compatibility
-MAX_ITERATIONS: int = MAX_LINT_ITERATIONS
-
-VERILATOR_TIMEOUT: int = int(os.getenv("VERILATOR_TIMEOUT", "30"))
+VERILATOR_TIMEOUT:  int = int(os.getenv("VERILATOR_TIMEOUT",  "30"))
 SIMULATION_TIMEOUT: int = int(os.getenv("SIMULATION_TIMEOUT", "30"))
 
 # ─── AMD ROCm / vLLM Optimization Settings ───────────────────────────────────
-ENABLE_PREFIX_CACHING: bool = os.getenv("ENABLE_PREFIX_CACHING", "true").lower() in ("true", "1", "yes")
-GPU_MEMORY_UTILIZATION: float = float(os.getenv("GPU_MEMORY_UTILIZATION", "0.90"))
-MAX_NUM_SEQS: int = int(os.getenv("MAX_NUM_SEQS", "64"))
-QUANTIZATION: str = os.getenv("QUANTIZATION", "")
-VLLM_DTYPE: str = os.getenv("VLLM_DTYPE", "float16")
-TENSOR_PARALLEL_SIZE: int = int(os.getenv("TENSOR_PARALLEL_SIZE", "1"))
+ENABLE_PREFIX_CACHING:   bool  = os.getenv("ENABLE_PREFIX_CACHING",   "true").lower() in ("true", "1", "yes")
+GPU_MEMORY_UTILIZATION:  float = float(os.getenv("GPU_MEMORY_UTILIZATION", "0.90"))
+MAX_NUM_SEQS:            int   = int(os.getenv("MAX_NUM_SEQS",         "64"))
+QUANTIZATION:            str   = os.getenv("QUANTIZATION", "")
+VLLM_DTYPE:              str   = os.getenv("VLLM_DTYPE", "float16")
+TENSOR_PARALLEL_SIZE:    int   = int(os.getenv("TENSOR_PARALLEL_SIZE", "1"))
 
-# ─── Server Configuration ────────────────────────────────────────────────────
+# ─── Server ───────────────────────────────────────────────────────────────────
 SERVER_HOST: str = os.getenv("SERVER_HOST", "0.0.0.0")
 SERVER_PORT: int = int(os.getenv("SERVER_PORT", "7860"))
 
 # ─── Filesystem ──────────────────────────────────────────────────────────────
-BASE_DIR: Path = Path(__file__).parent
+BASE_DIR:      Path = Path(__file__).parent
 WORKSPACE_DIR: Path = BASE_DIR / "workspace"
-FRONTEND_DIR: Path = BASE_DIR / "frontend"
+FRONTEND_DIR:  Path = BASE_DIR / "frontend"
 WORKSPACE_DIR.mkdir(exist_ok=True)
 
-# ─── Startup banner helper ────────────────────────────────────────────────────
+
+# ─── Runtime Warnings ─────────────────────────────────────────────────────────
+def _emit_warnings():
+    """Emit warnings for configurations that could silently produce wrong results."""
+    if DEPLOY_MODE in ("amd-api", "amd-deepseek") and not VLLM_API_KEY:
+        print(
+            "\n[RTL-AGENT WARNING] DEPLOY_MODE=amd-api but AMD_API_KEY is not set.\n"
+            "  Verify that the AMD Developer Portal provides a hosted inference API\n"
+            "  before trying this mode. If it doesn't, use DEPLOY_MODE=deepseek instead.\n"
+            "  AMD hackathon compute: https://www.amd.com/en/developer/resources/rocm-hub/ai-devmaster.html\n",
+            file=sys.stderr,
+        )
+    if DEPLOY_MODE == "deepseek" and not VLLM_API_KEY:
+        print(
+            "\n[RTL-AGENT WARNING] DEPLOY_MODE=deepseek but DEEPSEEK_API_KEY is not set.\n"
+            "  Get a key at: https://platform.deepseek.com/api_keys\n",
+            file=sys.stderr,
+        )
+    if DEPLOY_MODE == "vllm" and "localhost" not in VLLM_BASE_URL and "127.0.0.1" not in VLLM_BASE_URL:
+        print(
+            f"\n[RTL-AGENT WARNING] DEPLOY_MODE=vllm but VLLM_BASE_URL={VLLM_BASE_URL!r} "
+            "is not a localhost address.\n"
+            "  For the 40-pt ROCm criterion, vLLM must run locally on the AMD GPU instance.\n"
+            "  If benchmarking remotely, your TTFT numbers won't reflect local GPU inference.\n",
+            file=sys.stderr,
+        )
+
+
+# ─── Startup Banner ───────────────────────────────────────────────────────────
 def print_config():
-    """Print resolved configuration for debugging."""
+    """Print resolved configuration at startup."""
+    _emit_warnings()
+
     mode_labels = {
         "mock":         "MOCK (demo, no LLM)",
-        "amd-api":      "AMD FREE API (Qwen3.6-35B-A3B, zero credits)",
-        "amd-deepseek": "AMD FREE API (DeepSeek-V4-Flash, zero credits)",
-        "vllm":         "DEDICATED vLLM on AMD ROCm (local GPU)",
+        "deepseek":     "DeepSeek API · deepseek-coder (recommended for dev)",
+        "amd-api":      "AMD Portal API · Qwen3.6-35B-A3B  ⚠ verify endpoint first",
+        "amd-deepseek": "AMD Portal API · DeepSeek-V4-Flash  ⚠ verify endpoint first",
+        "vllm":         "LOCAL vLLM on AMD ROCm (final submission)",
     }
     label = mode_labels.get(DEPLOY_MODE, f"CUSTOM ({DEPLOY_MODE})")
+
+    key_display = "—"
+    if not MOCK_MODE and VLLM_API_KEY:
+        key_display = "***" + VLLM_API_KEY[-4:] if len(VLLM_API_KEY) > 6 else "(set)"
+
     print("=" * 68)
     print("  RTL Verification Agent v2 — Two-Tier Verification Loop")
     print(f"  Deploy : {label}")
     print(f"  Model  : {MODEL_NAME}")
     if not MOCK_MODE:
-        print(f"  API URL: {VLLM_BASE_URL}")
-        print(f"  API Key: {'***' + VLLM_API_KEY[-4:] if len(VLLM_API_KEY) > 6 else '(set)'}")
+        print(f"  URL    : {VLLM_BASE_URL}")
+        print(f"  Key    : {key_display}")
     print(f"  Limits : Lint={MAX_LINT_ITERATIONS} / Sim={MAX_FUNCTIONAL_ITERATIONS} / Total={MAX_TOTAL_ITERATIONS}")
     if DEPLOY_MODE == "vllm":
-        print(f"  ROCm   : prefix_cache={ENABLE_PREFIX_CACHING} gpu_mem={GPU_MEMORY_UTILIZATION} seqs={MAX_NUM_SEQS}")
+        print(f"  ROCm   : prefix_cache={ENABLE_PREFIX_CACHING}  gpu_mem={GPU_MEMORY_UTILIZATION}  seqs={MAX_NUM_SEQS}")
         if QUANTIZATION:
             print(f"  Quant  : {QUANTIZATION}")
     print("=" * 68)

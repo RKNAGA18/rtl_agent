@@ -128,38 +128,55 @@ The mock demo runs the full two-tier loop with pre-scripted responses:
 
 ---
 
-### Mode 2: AMD Free API (Qwen3.6-35B-A3B, zero credits)
+### Mode 2: DeepSeek API — Recommended for Local Dev ✅
 
-Use the AMD Developer Platform's free public API for real LLM testing without any GPU:
+Test the full real agent loop against a real LLM before touching GPU credits.
+DeepSeek's API is documented, inexpensive, and the coder model is elite at RTL:
 
 ```bash
-# 1. Get your API key from https://developer.amd.com.cn (AMD AI Developer Program)
-# 2. Set environment variables:
-export DEPLOY_MODE=amd-api
-export AMD_API_KEY=your-key-here
-
-# 3. Start the agent
+# 1. Get a key at: https://platform.deepseek.com/api_keys
+# 2. Run:
+export DEPLOY_MODE=deepseek
+export DEEPSEEK_API_KEY=your-key-here
 python agent_server.py
 ```
 
 **Windows (PowerShell):**
 ```powershell
-$env:DEPLOY_MODE = "amd-api"
-$env:AMD_API_KEY = "your-key-here"
+$env:DEPLOY_MODE     = "deepseek"
+$env:DEEPSEEK_API_KEY = "your-key-here"
 python agent_server.py
 ```
 
-This uses the **Qwen3.6-35B-A3B** model (35B params, strong at RTL/SV, strict formatting compliance). If the Qwen endpoint is throttled, switch to DeepSeek:
+This validates the entire pipeline (prompts → sv_parser regex → Tier 1/2 loop) against
+a real 7B+ coder model with zero GPU spend. Catches parser issues before the GPU window.
+
+---
+
+### Mode 3 (Optional): AMD Developer API
+
+> ⚠ **Verify before using.** AMD's hackathon compute access provides $100 in
+> AMD Developer Cloud credits for self-hosted vLLM on MI300X instances — it may
+> **not** be a standing managed inference API with a portal-issued key for a
+> pre-hosted model. Check before spending time hunting for a key that may not exist:
+> https://www.amd.com/en/developer/resources/rocm-hub/ai-devmaster.html
+
+If a hosted inference API is confirmed to exist:
 
 ```bash
-export DEPLOY_MODE=amd-deepseek   # uses DeepSeek-V4-Flash on same API
+export DEPLOY_MODE=amd-api
+export AMD_API_KEY=your-key-here
+python agent_server.py
 ```
 
 ---
 
-### Mode 3: Dedicated vLLM on AMD ROCm (Final Submission)
+### Mode 4: Dedicated vLLM on AMD ROCm (Final Submission)
 
-For the hackathon submission — proves local GPU inference on AMD hardware:
+> ⚠ **Always set `DEPLOY_MODE=vllm` explicitly** on the AMD cloud instance.
+> Never rely on `MOCK_MODE=false` auto-promotion — it defaults to `deepseek`,
+> not `vllm`. Running ROCm benchmarks against a remote API would invalidate
+> the 40-pt "local inference execution" criterion.
 
 ```bash
 # Step 0: Pre-flight environment check
@@ -169,11 +186,15 @@ chmod +x scripts/check_env.sh && ./scripts/check_env.sh
 pip install -r requirements.txt
 sudo apt-get install -y verilator build-essential
 
-# Step 2: Launch vLLM with optimizations
+# Step 2: Detect GPU arch + launch vLLM
 chmod +x scripts/vllm_launch.sh
-./scripts/vllm_launch.sh fp16-optimized   # prefix caching + tuned KV cache
+# The script auto-detects Instinct vs Radeon and sets the correct attention backend:
+#   Instinct (MI300X): VLLM_ATTENTION_BACKEND=ROCM_FLASH
+#   Radeon (RX 7900):  VLLM_ATTENTION_BACKEND=TRITON_ATTN
+# Override: GPU_ARCH=instinct ./scripts/vllm_launch.sh fp16-optimized
+./scripts/vllm_launch.sh fp16-optimized
 
-# Step 3: Start RTL-Agent in vLLM mode
+# Step 3: Start RTL-Agent — MUST set DEPLOY_MODE=vllm explicitly
 export DEPLOY_MODE=vllm
 export MODEL_NAME=vLLM-Qwen3
 python agent_server.py
@@ -181,21 +202,27 @@ python agent_server.py
 # Step 4: Run benchmark with time budget
 python benchmark/run_benchmark.py --time-budget-minutes 55
 
-# Step 5: Run ROCm optimization comparison
+# Step 5: ROCm optimization comparison (baseline vs prefix-cache)
+./scripts/vllm_launch.sh fp16          # restart in baseline mode first
+python benchmark/rocm_bench.py --config baseline --runs 3
+./scripts/vllm_launch.sh fp16-optimized
 python benchmark/rocm_bench.py --config prefix-cache --runs 3
+python benchmark/rocm_bench.py --report   # → benchmark/rocm_results.md
 ```
 
-> **Verilator version note:** `verilator --binary` mode (required for Tier 2) was stabilized in **Verilator 5.000**. The `check_env.sh` script verifies this. If your AMD cloud instance ships with an older verilator, build from source or use a recent Ubuntu image.
+> **Verilator note:** `verilator --binary` requires **Verilator 5.000+**. The
+> `check_env.sh` script verifies this.
 
 ---
 
 ## Model Strategy
 
-| Phase | Model | Endpoint | Why |
-|---|---|---|---|
-| **Local Dev** | `Qwen3.6-35B-A3B` | AMD Free API | 35B params. Deep enough to parse raw Verilator STDERR and map failures to specific SV lines. Strict formatting compliance (no filler text). Zero credits. |
-| **Fallback** | `DeepSeek-V4-Flash` | AMD Free API | Elite coding capabilities, same free endpoint. Use if Qwen is throttled. |
-| **Submission** | `vLLM-Qwen3` | Local vLLM on ROCm | Proves AMD hardware acceleration. `MiniCPM5-1B` is too small — will hallucinate hardware syntax. |
+| Phase | Mode | Model | Verified | Why |
+|---|---|---|---|---|
+| **Local dev (recommended)** | `deepseek` | `deepseek-coder` | ✅ Yes | Documented API, inexpensive, elite RTL code generation. Validates prompts + parser before GPU window. |
+| **AMD API (optional)** | `amd-api` | `Qwen3.6-35B-A3B` | ⚠ Check | 35B params, strong RTL. But verify AMD actually provides a hosted inference API before using. |
+| **AMD API fallback** | `amd-deepseek` | `DeepSeek-V4-Flash` | ⚠ Check | Same caveat — verify AMD endpoint first. |
+| **Final submission** | `vllm` | `vLLM-Qwen3` | ✅ Self-hosted | Local AMD GPU inference. `MiniCPM5-1B` is too small for RTL. Must set `DEPLOY_MODE=vllm` explicitly. |
 
 ---
 
