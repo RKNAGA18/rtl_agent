@@ -43,20 +43,22 @@ from tools.verilator_tool import run_verilator
 from tools.sv_parser import extract_systemverilog
 from tools.simulator_tool import run_simulation
 
-# ─── LLM Client (initialized for both amd-api and vllm modes) ────────────────
+# ─── LLM Client (initialized for all non-mock modes) ────────────────────────
 _llm_client = None
 
 if not MOCK_MODE:
     try:
         from openai import AsyncOpenAI
 
-        # AMD free API is remote → longer timeout, no extra_body support.
-        # vLLM is local → shorter timeout, supports extra_body for prefix caching.
-        _timeout = 180.0 if DEPLOY_MODE == "amd-api" else 120.0
+        # Remote APIs (amd-api, deepseek) need longer timeouts.
+        # Local vLLM gets a shorter timeout since latency should be minimal.
+        _timeout = 180.0 if DEPLOY_MODE in ("amd-api", "amd-deepseek", "deepseek") else 120.0
 
+        # Use VLLM_BASE_URL / VLLM_API_KEY from config — NOT hardcoded localhost.
+        # These are resolved from DEPLOY_MODE in config.py (_resolve_endpoint).
         _llm_client = AsyncOpenAI(
-            base_url="http://127.0.0.1:8000/v1",
-            api_key="sk-dummy",
+            base_url=VLLM_BASE_URL,
+            api_key=VLLM_API_KEY or "sk-dummy",
             timeout=_timeout,
         )
     except ImportError as e:
@@ -262,16 +264,31 @@ async def _real_loop(
         full_response, elapsed_ms, tok, ttft_ms = result_holder[0]
 
         # ── Extract SV ────────────────────────────────────────────────────
-        sv_code = extract_systemverilog(full_response)
+        _dump_label = f"{session_id}_parse_fail_iter{total_iter}"
+        sv_code = extract_systemverilog(
+            full_response,
+            dump_on_failure=True,
+            dump_path=WORKSPACE_DIR,
+            label=_dump_label,
+        )
         if not sv_code:
-            yield _ev("thought", message="⚠ Could not parse SV from response. Asking LLM to reformat...")
+            yield _ev("thought",
+                      message=f"[!] Could not extract SV from response. "
+                              f"Raw response saved to workspace/{_dump_label}.txt. "
+                              "Asking LLM to reformat...")
             messages.append({"role": "assistant", "content": full_response})
             messages.append({
                 "role": "user",
                 "content": (
-                    "Your response did not contain a properly fenced SystemVerilog block.\n"
-                    "You MUST output the complete module inside a ```systemverilog ... ``` fence.\n"
-                    "Do not include any text after the closing fence. Try again."
+                    "Your response did not contain a parseable SystemVerilog code block.\n"
+                    "Output the complete module inside exactly ONE ```verilog fence.\n"
+                    "Example:\n"
+                    "```verilog\n"
+                    "module example(input logic a, output logic b);\n"
+                    "  assign b = a;\n"
+                    "endmodule\n"
+                    "```\n"
+                    "No other text after the closing fence."
                 ),
             })
             continue
@@ -291,7 +308,7 @@ async def _real_loop(
                   tokens_generated=tok)
 
         # ── Verilator lint ────────────────────────────────────────────────
-        yield _ev("thought", message=f"Running: verilator --lint-only --Wall --timing {sv_filename}")
+        yield _ev("thought", message=f"Running: verilator --lint-only -Wall -Wno-style --timing {sv_filename}")
         yield _ev("tool_call", tool="verilator", file=sv_filename)
 
         vresult = await asyncio.get_event_loop().run_in_executor(
@@ -367,7 +384,7 @@ async def _real_loop(
     yield _ev("thought", message="[Tier 2] Generating self-checking testbench for functional verification...")
 
     # Amendment 6: append testbench request to the SAME rolling history
-    messages.append({"role": "assistant", "content": f"```systemverilog\n{final_dut}\n```"})
+    messages.append({"role": "assistant", "content": f"```verilog\n{final_dut}\n```"})
     messages.append({
         "role": "user",
         "content": build_testbench_prompt(spec, final_dut),
