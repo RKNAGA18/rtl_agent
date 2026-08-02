@@ -1,20 +1,23 @@
 """
-prompts.py — Expert-engineered RTL prompts for the Autonomous Verification Agent.
+prompts.py -- Expert-engineered RTL prompts for the Autonomous Verification Agent.
 
 Key design decisions:
-  - Fence tag is ```verilog (not ```systemverilog) — code-tuned models are trained
+  - Fence tag is ```verilog (not ```systemverilog) -- code-tuned models are trained
     on far more ```verilog content and produce it more reliably. The parser in
     sv_parser.py accepts both tags; the prompt specifies the preferred one.
-  - SYSTEM_PROMPT includes a worked D flip-flop example — small models (7B) follow
+  - SYSTEM_PROMPT includes a worked D flip-flop example -- small models (7B) follow
     a concrete example far more reliably than prose rules alone.
+  - THREE GOLDEN RULES target the three most common Qwen-7B syntax mistakes seen
+    in live benchmark runs: nested replication, binary digit '7', output port
+    driven from procedural block.
   - build_correction_prompt() passes only the filtered %Error/%Warning lines to the
     LLM rather than the full Verilator STDERR. A 7B model has limited long-context
     attention; sending a 60-line log when only 3 lines matter degrades accuracy.
-  - ZERO CONVERSATION rules are enforced — no "Here is the code" filler that breaks
+  - ZERO CONVERSATION rules enforced -- no "Here is the code" filler that breaks
     the regex parser.
 """
 
-# ─── System Prompt ─────────────────────────────────────────────────────────────
+# --- System Prompt ------------------------------------------------------------
 SYSTEM_PROMPT = """\
 You are an expert hardware design engineer writing clean, synthesizable,
 Verilator-compliant SystemVerilog (IEEE 1800-2017).
@@ -26,7 +29,7 @@ Rules:
 2. Use synthesizable constructs only: always_comb, always_ff, explicit
    logic/wire/reg declarations, explicit port directions. Synchronous active-high
    reset unless told otherwise.
-3. Strict bit-width matching on every assignment — width mismatches are a
+3. Strict bit-width matching on every assignment -- width mismatches are a
    Verilator lint error. Use explicit sizing (e.g. 4'b0) when needed.
 4. Declare all signals before use. Use `logic` not `reg`/`wire`.
 5. If given a Verilator error log: do not resubmit unchanged or near-identical
@@ -34,6 +37,20 @@ Rules:
    a fully corrected implementation that specifically addresses it.
 6. Be concise: at most 2 sentences of explanation before the code block. No
    repeated restatement of the spec. No text after the closing fence.
+
+THREE GOLDEN RULES -- Verilator will reject code that violates these:
+7. NEVER nest replication operators. `{DEPTH{DATA_WIDTH{1'b0}}}` is illegal
+   SystemVerilog. To zero-initialize a memory array, use an explicit loop:
+       for (int i = 0; i < DEPTH; i++) mem[i] = '0;
+8. NEVER put a decimal digit (7, 8, 9) inside a binary literal. `4'b7` is
+   an illegal character error. Use `4'd7` (decimal) or `4'b0111` (binary).
+   The only valid digits in a binary literal are 0, 1, x, z.
+9. NEVER drive an output port directly from a procedural block (`always_ff`,
+   `always_comb`). Declare an internal `logic` signal for the procedural
+   assignment, then connect it to the output with a continuous `assign`:
+       logic [WIDTH-1:0] count_r;
+       always_ff @(posedge clk) count_r <= count_r + 1;
+       assign out = count_r;
 
 Example of the exact expected format:
 
@@ -64,24 +81,24 @@ endmodule
 """
 
 
-# ─── User Prompt Builder ──────────────────────────────────────────────────────
+# --- User Prompt Builder ------------------------------------------------------
 def build_user_prompt(spec: str) -> str:
     return f"""Design and implement the following digital hardware module in SystemVerilog.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
  HARDWARE SPECIFICATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 {spec.strip()}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
  DELIVERABLE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 Output a single, complete SystemVerilog module inside a ```verilog code fence.
 No other text after the closing fence.
 """
 
 
-# ─── Tier 1 Correction Prompt (REFLECTION MODE) ───────────────────────────────
+# --- Tier 1 Correction Prompt (REFLECTION MODE) -------------------------------
 def build_correction_prompt(sv_code: str, verilator_errors: str, iteration: int) -> str:
     """
     Build a lint correction prompt with filtered Verilator output.
@@ -96,42 +113,50 @@ def build_correction_prompt(sv_code: str, verilator_errors: str, iteration: int)
     error_count   = verilator_errors.lower().count("%error:")
     warning_count = verilator_errors.lower().count("%warning")
 
-    return f"""REFLECTION MODE — attempt #{iteration} failed Verilator lint.
+    return f"""REFLECTION MODE -- attempt #{iteration} failed Verilator lint.
 {error_count} error(s), {warning_count} warning(s).
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- VERILATOR ERRORS — read the exact line number and error type
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+ VERILATOR ERRORS -- read the exact line number and error type
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 {filtered.strip()}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
  YOUR PREVIOUS CODE (contains the above errors)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 ```verilog
 {sv_code.strip()}
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
  CORRECTION INSTRUCTIONS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 For each error: identify the exact line number, fix the specific issue.
-Output the ENTIRE corrected module — do NOT output partial fixes or diffs.
+Output the ENTIRE corrected module -- do NOT output partial fixes or diffs.
 
 Root causes to check:
   - Missing semicolons after port declarations or statements
   - `reg`/`wire` used instead of `logic`
   - Missing `begin`/`end` around multi-statement blocks
-  - Undeclared internal signals — declare with `logic` before first use
-  - Latch inference — all if/case branches must be complete
-  - Blocking `=` inside always_ff — change to non-blocking `<=`
-  - Non-blocking `<=` inside always_comb — change to blocking `=`
-  - Bit-width mismatch on LHS vs RHS — use explicit sizing
+  - Undeclared internal signals -- declare with `logic` before first use
+  - Latch inference -- all if/case branches must be complete
+  - Blocking `=` inside always_ff -- change to non-blocking `<=`
+  - Non-blocking `<=` inside always_comb -- change to blocking `=`
+  - Bit-width mismatch on LHS vs RHS -- use explicit sizing
+
+THREE GOLDEN RULES -- do not violate these in your fix:
+  - NEVER nest replication operators. Nested replication is ILLEGAL in SV.
+    Use a loop: `for (int i = 0; i < DEPTH; i++) mem[i] = '0;`
+  - NEVER use decimal digits (7, 8, 9) inside a binary literal.
+    `4'b7` is an illegal character error. Use `4'd7` or `4'b0111`.
+  - NEVER drive an output port directly from a procedural block.
+    Use an internal `logic` register and `assign out = reg_name;` outside.
 
 Output ONLY the ```verilog block. No text before or after it.
 """
 
 
-# ─── Testbench Generation System Prompt (Tier 2) ──────────────────────────────
+# --- Testbench Generation System Prompt (Tier 2) ------------------------------
 TESTBENCH_GENERATION_SYSTEM_PROMPT = """\
 You are an expert SystemVerilog verification engineer writing self-checking
 testbenches for Verilator simulation.
@@ -161,21 +186,21 @@ Rules:
 def build_testbench_prompt(spec: str, dut_code: str) -> str:
     return f"""Write a SELF-CHECKING Verilator testbench for the RTL module below.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
  ORIGINAL SPECIFICATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 {spec.strip()}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
  MODULE UNDER TEST (DUT)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 ```verilog
 {dut_code.strip()}
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
  TESTBENCH REQUIREMENTS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 1. Instantiate the DUT connecting ALL ports by name.
 2. Drive a 10ns clock and synchronous active-high reset (hold >= 3 cycles).
 3. Apply at least 3 distinct stimulus cases:
@@ -192,30 +217,30 @@ Output ONLY the ```verilog block.
 """
 
 
-# ─── Tier 2 Functional Correction Prompt (REFLECTION MODE) ────────────────────
+# --- Tier 2 Functional Correction Prompt (REFLECTION MODE) --------------------
 def build_functional_correction_prompt(sim_log: str, spec: str, dut_code: str) -> str:
-    return f"""REFLECTION MODE — lint PASSED but functional simulation FAILED.
+    return f"""REFLECTION MODE -- lint PASSED but functional simulation FAILED.
 This is a BEHAVIORAL bug, not a syntax error.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- SIMULATION OUTPUT — read the exact FAIL message
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+ SIMULATION OUTPUT -- read the exact FAIL message
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 {sim_log.strip()}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
  YOUR PREVIOUS MODULE (passed lint but has a behavioral bug)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 ```verilog
 {dut_code.strip()}
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- BEHAVIORAL BUG — CORRECTION INSTRUCTIONS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+ BEHAVIORAL BUG -- CORRECTION INSTRUCTIONS
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 1. Read the exact FAIL message from the simulation output above.
 2. Identify the root cause (edge sensitivity, reset polarity, off-by-one,
    overflow handling, FSM timing, output registered vs combinational).
-3. Output the ENTIRE corrected module — do NOT output partial fixes or diffs.
+3. Output the ENTIRE corrected module -- do NOT output partial fixes or diffs.
 
 Original specification:
 {spec.strip()}
@@ -224,7 +249,7 @@ Output ONLY the ```verilog block. No text before or after it.
 """
 
 
-# ─── Testbench Correction Prompt (Tier 2 build failure in TESTBENCH) ──────────
+# --- Testbench Correction Prompt (Tier 2 build failure in TESTBENCH) ----------
 def build_testbench_correction_prompt(
     spec: str,
     dut_code: str,
@@ -235,7 +260,7 @@ def build_testbench_correction_prompt(
     Build a testbench-specific correction prompt for Tier 2 build failures
     where the error is confirmed to be in the TESTBENCH, not the DUT.
 
-    The DUT is frozen — only the testbench is regenerated.
+    The DUT is frozen -- only the testbench is regenerated.
     This breaks the infinite-loop failure mode where a valid DUT gets
     repeatedly rewritten because the testbench has a clock-arithmetic syntax error.
 
@@ -247,28 +272,28 @@ def build_testbench_correction_prompt(
     return f"""TESTBENCH CORRECTION MODE -- The DUT is correct. The testbench has a BUILD ERROR.
 The DUT is FROZEN -- do NOT change it. Regenerate ONLY the testbench.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
  VERILATOR BUILD ERRORS (in testbench file)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 {filtered.strip()}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
  FROZEN DUT (do not modify)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 ```verilog
 {dut_code.strip()}
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
  BROKEN TESTBENCH (fix the errors above)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 ```verilog
 {broken_tb_code.strip()}
 ```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
  CORRECTION INSTRUCTIONS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 Fix ONLY the testbench errors above. Common testbench bugs:
   - Clock arithmetic: MUST use #(CLK_PERIOD/2) not #CLK_PERIOD/2
   - Port connections: instantiate DUT using named ports (.clk(clk), .rst(rst))
