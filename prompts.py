@@ -145,6 +145,16 @@ Rules:
 5. On all checks passing: $display("PASS: all checks passed"); $finish;
 6. Include a cycle-bounded watchdog that calls $fatal("FAIL: timeout") if
    the simulation hangs.
+7. CLOCK GENERATION RULE (critical -- Verilator syntax):
+   Any arithmetic expression after a delay control (#) MUST be wrapped in
+   parentheses. Write:
+       forever #(CLK_PERIOD/2) clk = ~clk;
+   NEVER write:
+       forever #CLK_PERIOD / 2 clk = ~clk;   // syntax error in Verilator
+   Use a localparam for the period:
+       localparam CLK_PERIOD = 10;
+       initial clk = 0;
+       always #(CLK_PERIOD/2) clk = ~clk;
 """
 
 
@@ -211,4 +221,64 @@ Original specification:
 {spec.strip()}
 
 Output ONLY the ```verilog block. No text before or after it.
+"""
+
+
+# ─── Testbench Correction Prompt (Tier 2 build failure in TESTBENCH) ──────────
+def build_testbench_correction_prompt(
+    spec: str,
+    dut_code: str,
+    broken_tb_code: str,
+    error_log: str,
+) -> str:
+    """
+    Build a testbench-specific correction prompt for Tier 2 build failures
+    where the error is confirmed to be in the TESTBENCH, not the DUT.
+
+    The DUT is frozen — only the testbench is regenerated.
+    This breaks the infinite-loop failure mode where a valid DUT gets
+    repeatedly rewritten because the testbench has a clock-arithmetic syntax error.
+
+    Uses filter_verilator_errors() to pass only relevant lines to the LLM.
+    """
+    from tools.verilator_tool import filter_verilator_errors
+    filtered = filter_verilator_errors(error_log)
+
+    return f"""TESTBENCH CORRECTION MODE -- The DUT is correct. The testbench has a BUILD ERROR.
+The DUT is FROZEN -- do NOT change it. Regenerate ONLY the testbench.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ VERILATOR BUILD ERRORS (in testbench file)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{filtered.strip()}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FROZEN DUT (do not modify)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```verilog
+{dut_code.strip()}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ BROKEN TESTBENCH (fix the errors above)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```verilog
+{broken_tb_code.strip()}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ CORRECTION INSTRUCTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Fix ONLY the testbench errors above. Common testbench bugs:
+  - Clock arithmetic: MUST use #(CLK_PERIOD/2) not #CLK_PERIOD/2
+  - Port connections: instantiate DUT using named ports (.clk(clk), .rst(rst))
+  - Missing begin/end around multi-statement always/initial blocks
+  - $fatal requires a string: $fatal("FAIL: reason") not $fatal;
+  - Watchdog: use an integer cycle counter, not an unbounded wait()
+  - All signals must be declared as logic before use
+
+Original spec for reference:
+{spec.strip()}
+
+Output ONLY the corrected ```verilog testbench block. Do NOT output the DUT.
 """

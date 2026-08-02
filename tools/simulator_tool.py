@@ -42,6 +42,8 @@ class SimResult:
     phase: Literal["build", "run"] = "run"
     # Telemetry (Amendment 8)
     elapsed_ms: float = 0.0
+    # Which file the error references (used for TB vs DUT routing in agent.py)
+    error_file: str = ""   # e.g. "tb_top.sv" or "{session_id}_iter3.sv"
 
 
 # ─── Top-Module Extractor ─────────────────────────────────────────────────────
@@ -199,12 +201,14 @@ def run_simulation(
     obj_p = _posix_if_win(str(obj_dir))
     bin_p = _posix_if_win(str(sim_binary))
 
-    # ── Phase 1: Compile ───────────────────────────────────────────────────────
+    # Phase 1: Compile
     compile_cmd = _verilator_cmd([
         "verilator",
         "--binary",
         "--timing",
-        "-Wall",
+        "-Wall",        # all warnings
+        "-Wno-style",   # suppress DECLFILENAME and cosmetic warnings
+        "-Wno-fatal",   # non-fatal warnings don't abort the build
         "--sv",
         "--top-module", top_module,
         "-o", bin_p,
@@ -228,10 +232,19 @@ def run_simulation(
             timed_out=True,
             phase="build",
             elapsed_ms=elapsed_build,
+            error_file="",
         )
 
-    if rc_c != 0:
-        # Amendment 2: compile failure → phase="build" → agent uses lint-correction prompt
+    # String-based build pass/fail -- same rationale as verilator_tool.py.
+    # Verilator may exit 1 for non-fatal warnings; %Error is the real signal.
+    build_combined = stdout_c + stderr_c
+    build_has_error = "%Error" in build_combined
+
+    if build_has_error:
+        # Determine whether the error mentions the testbench or the DUT.
+        tb_basename = str(tb_path.name)   # e.g. "tb_top.sv"
+        error_file = tb_basename if tb_basename in build_combined else ""
+        # Amendment 2: compile failure -> phase="build" -> agent uses correction prompt
         return SimResult(
             passed=False,
             stdout=stdout_c,
@@ -240,6 +253,7 @@ def run_simulation(
             timed_out=False,
             phase="build",
             elapsed_ms=elapsed_build,
+            error_file=error_file,
         )
 
     # ── Phase 2: Run ───────────────────────────────────────────────────────────

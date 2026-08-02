@@ -38,6 +38,7 @@ from prompts import (
     SYSTEM_PROMPT, TESTBENCH_GENERATION_SYSTEM_PROMPT,
     build_user_prompt, build_correction_prompt,
     build_testbench_prompt, build_functional_correction_prompt,
+    build_testbench_correction_prompt,
 )
 from tools.verilator_tool import run_verilator
 from tools.sv_parser import extract_systemverilog
@@ -464,26 +465,71 @@ async def _real_loop(
                       message=f"✓ Both tiers PASSED in {total_iter} total iteration(s). Zero errors, zero warnings, simulation clean.")
             return
 
-        # ── Route correction prompt based on failure phase ─────────────────
+        # ── Dual-track routing on failure ─────────────────────────────────────────
         total_iter += 1
         sim_log = sim.stdout + ("\n" + sim.stderr if sim.stderr else "")
 
         if sim.phase == "build":
-            # Amendment 2: build failure → structural bug → Tier 1 correction prompt
-            yield _ev("thought",
-                      message=f"[Am.2] verilator --binary build FAILED (structural/elaboration error). "
-                               "Routing to Tier 1 (lint) correction prompt — this is NOT a behavioral bug.")
-            messages.append({"role": "assistant", "content": f"```systemverilog\n{final_dut}\n```"})
-            messages.append({
-                "role": "user",
-                "content": build_correction_prompt(final_dut, sim_log, total_iter),
-            })
+            # Check whether the error is in the TESTBENCH or the DUT.
+            # sim.error_file is set to "tb_top.sv" by simulator_tool when the
+            # error text references that filename; otherwise it's empty.
+            tb_error = (
+                sim.error_file == "tb_top.sv"
+                or "tb_top.sv" in sim_log
+                or "tb_" in sim_log
+            )
+
+            if tb_error:
+                # Testbench has the error -- DUT is correct and FROZEN.
+                # Regenerate only the testbench; do not touch final_dut.
+                yield _ev("thought",
+                          message="[Tier 2] Build FAILED in TESTBENCH (not DUT). "
+                                   "DUT frozen. Regenerating testbench only...")
+                tb_messages_fix = [
+                    {"role": "system", "content": TESTBENCH_GENERATION_SYSTEM_PROMPT},
+                    {"role": "user",
+                     "content": build_testbench_correction_prompt(
+                         spec, final_dut, tb_code, sim_log
+                     )},
+                ]
+                tb_fix_result: list = []
+                async for ev in _llm_stream(tb_messages_fix, tb_fix_result, total_iter):
+                    yield ev
+
+                if tb_fix_result and tb_fix_result[0][0] is not None:
+                    tb_fix_resp = tb_fix_result[0][0]
+                    new_tb = extract_systemverilog(tb_fix_resp)
+                    if new_tb:
+                        tb_code = new_tb
+                        final_tb = new_tb
+                        tb_path.write_text(new_tb, encoding="utf-8")
+                        yield _ev("testbench_generated",
+                                  total_iterations=total_iter,
+                                  code=new_tb,
+                                  filename=str(tb_path.name),
+                                  elapsed_ms=tb_fix_result[0][1],
+                                  ttft_ms=tb_fix_result[0][3],
+                                  tokens_generated=tb_fix_result[0][2],
+                                  source="tb_correction")
+                continue  # retry simulation with fixed testbench
+
+            else:
+                # Error is in the DUT -- use lint correction prompt.
+                yield _ev("thought",
+                          message="[Am.2] Build FAILED in DUT (structural/elaboration error). "
+                                   "Routing to Tier 1 lint correction prompt.")
+                messages.append({"role": "assistant", "content": f"```verilog\n{final_dut}\n```"})
+                messages.append({
+                    "role": "user",
+                    "content": build_correction_prompt(final_dut, sim_log, total_iter),
+                })
+
         else:
-            # run failure → behavioral bug → Tier 2 functional correction prompt
+            # run failure -- behavioral bug -- Tier 2 functional correction
             yield _ev("thought",
-                      message=f"[Tier 2] Simulation FAILED functionally. "
+                      message="[Tier 2] Simulation FAILED functionally. "
                                "Feeding sim log into behavioral correction prompt...")
-            messages.append({"role": "assistant", "content": f"```systemverilog\n{final_dut}\n```"})
+            messages.append({"role": "assistant", "content": f"```verilog\n{final_dut}\n```"})
             messages.append({
                 "role": "user",
                 "content": build_functional_correction_prompt(sim_log, spec, final_dut),

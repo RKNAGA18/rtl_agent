@@ -101,10 +101,12 @@ def extract_systemverilog(
 
 
 def _dump_failure(raw_text: str, workspace: Path, label: str) -> None:
-    """Write the raw LLM response to a debug file so NOT_RUN cases are debuggable."""
+    """Write the raw LLM response to a debug file so NOT_RUN cases are debuggable.
+    Prefix is 'extraction_failure_' for easy grep/find in the workspace directory.
+    """
     try:
         workspace.mkdir(parents=True, exist_ok=True)
-        dump_file = workspace / f"{label}.txt"
+        dump_file = workspace / f"extraction_failure_{label}.txt"
         dump_file.write_text(raw_text, encoding="utf-8", errors="replace")
     except Exception:
         pass   # never crash the agent due to a debug dump
@@ -117,6 +119,7 @@ def _normalize(code: str) -> str:
     - Ensure `timescale directive is present (add if missing)
     - Ensure `default_nettype none is present (add if missing)
     - Ensure trailing `default_nettype wire
+    - Enforce POSIX trailing newline (eliminates Verilator EOFNEWLINE warning)
     """
     code = code.replace("\r\n", "\n").strip()
 
@@ -135,6 +138,11 @@ def _normalize(code: str) -> str:
     # Ensure trailing default_nettype wire
     if "`default_nettype wire" not in code:
         code = code + "\n\n`default_nettype wire"
+
+    # POSIX EOF: Verilator emits EOFNEWLINE if file does not end with \n.
+    # Enforce unconditionally -- silences the warning deterministically.
+    if not code.endswith("\n"):
+        code = code + "\n"
 
     return code
 
