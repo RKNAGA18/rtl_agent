@@ -36,8 +36,11 @@ from config import (
 )
 from prompts import (
     SYSTEM_PROMPT, TESTBENCH_GENERATION_SYSTEM_PROMPT,
-    build_user_prompt, build_correction_prompt,
-    build_testbench_prompt, build_functional_correction_prompt,
+    ARCHITECT_SYSTEM_PROMPT, build_architect_prompt,
+    build_user_prompt, build_coder_user_prompt,
+    build_correction_prompt,
+    build_testbench_prompt, build_verifier_testbench_prompt,
+    build_functional_correction_prompt,
     build_testbench_correction_prompt,
 )
 from tools.verilator_tool import run_verilator
@@ -115,10 +118,18 @@ async def _llm_call(
     raise NotImplementedError("Use _llm_stream() instead")
 
 
+class _TelemetryTracker:
+    def __init__(self):
+        self.run_start_time = time.monotonic()
+        self.first_token_time: Optional[float] = None
+        self.total_tokens = 0
+
+
 async def _llm_stream(
     messages: List[Dict],
     result_holder: list,
     iteration: int,
+    tracker: Optional[_TelemetryTracker] = None,
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
     Stream LLM response, yielding SSE token events.
@@ -171,8 +182,18 @@ async def _llm_stream(
                     if not first_token_received:
                         ttft_ms = (time.perf_counter() - t0) * 1000
                         first_token_received = True
+                        if tracker is not None and tracker.first_token_time is None:
+                            tracker.first_token_time = time.monotonic()
+                            ttft_total_ms = (tracker.first_token_time - tracker.run_start_time) * 1000
+                            yield _ev("telemetry_update",
+                                      ttft_ms=round(ttft_total_ms, 1),
+                                      tokens_per_sec=0.0,
+                                      total_tokens=tracker.total_tokens,
+                                      elapsed_sec=round(tracker.first_token_time - tracker.run_start_time, 2))
                     full_response += content
                     tokens_generated += 1
+                    if tracker is not None:
+                        tracker.total_tokens += 1
                     yield _ev("llm_token", token=content)
 
             # Success — break out of retry loop
@@ -192,6 +213,18 @@ async def _llm_stream(
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     tps = (tokens_generated / elapsed_ms * 1000) if elapsed_ms > 0 else 0.0
+
+    if tracker is not None:
+        now = time.monotonic()
+        tot_elapsed = now - tracker.run_start_time
+        tok_per_sec = tracker.total_tokens / tot_elapsed if tot_elapsed > 0 else 0.0
+        ttft_val = (tracker.first_token_time - tracker.run_start_time) * 1000 if tracker.first_token_time else 0.0
+        yield _ev("telemetry_update",
+                  ttft_ms=round(ttft_val, 1),
+                  tokens_per_sec=round(tok_per_sec, 1),
+                  total_tokens=tracker.total_tokens,
+                  elapsed_sec=round(tot_elapsed, 2))
+
     yield _ev("llm_done",
                chars=len(full_response),
                elapsed_ms=elapsed_ms,
@@ -204,20 +237,25 @@ async def _llm_stream(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Real Agent (vLLM + real Verilator)
+#  Real Agent (vLLM + real Verilator) — 3-Agent Pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 async def _real_loop(
     spec: str,
     session_id: str,
 ) -> AsyncGenerator[Dict[str, Any], None]:
 
-    # Amendment 6: single rolling history spans BOTH tiers.
-    messages: List[Dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user",   "content": build_user_prompt(spec)},
-    ]
+    # ── Pipeline State Dictionary (Pure Python State Machine) ─────────────────
+    state: Dict[str, str] = {
+        "spec": spec,
+        "architect_plan": "",
+        "rtl_code": "",
+        "tb_code": ""
+    }
 
-    # Amendment 1: global ceiling across both tiers
+    # Telemetry tracker across the entire session run
+    tracker = _TelemetryTracker()
+
+    # Global iteration counter across all agents
     total_iter = 0
     lint_status = "NOT_RUN"
     functional_status = "NOT_RUN"
@@ -231,13 +269,46 @@ async def _real_loop(
               mock=False,
               model=MODEL_NAME)
 
+    # ══════════════════════════════════════════════════════════════════════════
+    #  AGENT 1: ARCHITECT — Plan, Ports, Edge Cases, Verification Strategy
+    # ══════════════════════════════════════════════════════════════════════════
+    yield _ev("agent_status", agent="Architect", status="Drafting Verification Plan...")
+    yield _ev("thought", message="[Agent 1 · Architect] Analyzing spec to draft Micro-Architecture & Verification Strategy...")
+
+    arch_messages: List[Dict] = [
+        {"role": "system", "content": ARCHITECT_SYSTEM_PROMPT},
+        {"role": "user",   "content": build_architect_prompt(state["spec"])},
+    ]
+
+    total_iter += 1
+    arch_result: List = []
+    async for ev in _llm_stream(arch_messages, arch_result, total_iter, tracker=tracker):
+        yield ev
+
+    if arch_result and arch_result[0][0]:
+        state["architect_plan"] = arch_result[0][0]
+    else:
+        state["architect_plan"] = f"Micro-Architecture Plan for {state['spec']}"
+
+    yield _ev("thought", message="[Agent 1 · Architect] Micro-Architecture plan finalized. Handing off to Coder...")
+    yield _ev("agent_status", agent="Architect", status="Plan Complete ✓")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  AGENT 2: CODER — RTL Generation & Verilator Lint Self-Correction
+    # ══════════════════════════════════════════════════════════════════════════
+    yield _ev("agent_status", agent="Coder", status="Synthesizing RTL & Linting...")
+    yield _ev("thought", message="[Agent 2 · Coder] Synthesizing SystemVerilog RTL and executing Verilator lint loop...")
+
+    messages: List[Dict] = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user",   "content": build_coder_user_prompt(state["spec"], state["architect_plan"])},
+    ]
+
     final_dut: Optional[str] = None
     final_tb: Optional[str] = None
     dut_filename: Optional[str] = None
+    sv_path = None
 
-    # ══════════════════════════════════════════════════════════════════════════
-    #  TIER 1 — Lint / Syntax Loop
-    # ══════════════════════════════════════════════════════════════════════════
     lint_status = "RUNNING"
     for lint_iter in range(1, MAX_LINT_ITERATIONS + 1):
         if total_iter >= MAX_TOTAL_ITERATIONS:
@@ -256,7 +327,7 @@ async def _real_loop(
 
         # ── LLM call ──────────────────────────────────────────────────────
         result_holder: list = []
-        async for ev in _llm_stream(messages, result_holder, total_iter):
+        async for ev in _llm_stream(messages, result_holder, total_iter, tracker=tracker):
             yield ev
 
         if not result_holder or result_holder[0][0] is None:
@@ -335,8 +406,10 @@ async def _real_loop(
         if vresult["success"]:
             lint_status = "PASSED"
             final_dut = sv_code
+            state["rtl_code"] = sv_code
             dut_filename = sv_filename
-            yield _ev("thought", message="✓ Tier 1 PASSED — design is lint-clean. Proceeding to Tier 2 functional verification.")
+            yield _ev("thought", message="✓ Tier 1 PASSED — design is lint-clean. Handing off to Verifier.")
+            yield _ev("agent_status", agent="Coder", status="RTL Lint-Clean ✓")
             break
 
         # ── Self-correction ────────────────────────────────────────────────
@@ -356,6 +429,7 @@ async def _real_loop(
         lint_status = "FAILED"
 
     if lint_status != "PASSED":
+        yield _ev("agent_status", agent="Coder", status="Lint Failed ✗")
         functional_status = "NOT_RUN"
         yield _ev("final_result",
                   lint_status=lint_status,
@@ -363,15 +437,15 @@ async def _real_loop(
                   final_dut=final_dut,
                   final_tb=None,
                   total_iterations=total_iter,
-                  message=f"Lint failed after {total_iter} iteration(s). Functional verification not attempted.")
+                  message=f"RTL synthesis/lint failed after {total_iter} iteration(s).")
         return
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  TIER 2 — Functional Verification Loop
+    #  AGENT 3: VERIFIER — Testbench Generation & Simulation Verification Loop
     # ══════════════════════════════════════════════════════════════════════════
     # Generate testbench (uses its own system prompt but SAME conversation history)
     if total_iter >= MAX_TOTAL_ITERATIONS:
-        yield _ev("thought", message="⛔ Global ceiling reached before Tier 2 could start.")
+        yield _ev("thought", message="⛔ Global ceiling reached before Verifier could start.")
         yield _ev("final_result",
                   lint_status="PASSED",
                   functional_status="NOT_RUN",
@@ -381,14 +455,15 @@ async def _real_loop(
                   message="Global iteration ceiling reached after Tier 1.")
         return
 
+    yield _ev("agent_status", agent="Verifier", status="Simulating & Extracting Waveforms...")
     total_iter += 1
-    yield _ev("thought", message="[Tier 2] Generating self-checking testbench for functional verification...")
+    yield _ev("thought", message="[Agent 3 · Verifier] Generating self-checking testbench with VCD waveform extraction...")
 
     # Amendment 6: append testbench request to the SAME rolling history
     messages.append({"role": "assistant", "content": f"```verilog\n{final_dut}\n```"})
     messages.append({
         "role": "user",
-        "content": build_testbench_prompt(spec, final_dut),
+        "content": build_verifier_testbench_prompt(state["spec"], final_dut, state["architect_plan"]),
     })
     # Override system prompt for testbench generation (allows $display, etc.)
     tb_messages = [
@@ -397,7 +472,7 @@ async def _real_loop(
     ]
 
     tb_result_holder: list = []
-    async for ev in _llm_stream(tb_messages, tb_result_holder, total_iter):
+    async for ev in _llm_stream(tb_messages, tb_result_holder, total_iter, tracker=tracker):
         yield ev
 
     if not tb_result_holder or tb_result_holder[0][0] is None:
@@ -415,6 +490,7 @@ async def _real_loop(
     tb_path = WORKSPACE_DIR / tb_filename
     tb_path.write_text(tb_code, encoding="utf-8")
     final_tb = tb_code
+    state["tb_code"] = tb_code
 
     yield _ev("testbench_generated",
               total_iterations=total_iter,
@@ -454,15 +530,24 @@ async def _real_loop(
                   phase=sim.phase,
                   elapsed_ms=sim.elapsed_ms)
 
+        if sim.vcd_data is not None:
+            yield _ev("waveform_ready",
+                      vcd_data=sim.vcd_data,
+                      vcd_size_bytes=sim.vcd_size_bytes)
+        elif sim.vcd_size_bytes > 0:
+            yield _ev("waveform_warning",
+                      message=f"VCD too large ({sim.vcd_size_bytes:,} bytes). Add #5000 $finish to testbench.")
+
         if sim.passed:
             functional_status = "PASSED"
+            yield _ev("agent_status", agent="Verifier", status="Verification Passed ✓")
             yield _ev("final_result",
                       lint_status="PASSED",
                       functional_status="PASSED",
-                      final_dut=final_dut,
-                      final_tb=final_tb,
+                      final_dut=state["rtl_code"],
+                      final_tb=state["tb_code"],
                       total_iterations=total_iter,
-                      message=f"✓ Both tiers PASSED in {total_iter} total iteration(s). Zero errors, zero warnings, simulation clean.")
+                      message=f"✓ Complete 3-Agent Pipeline PASSED in {total_iter} total iteration(s). Architect ➔ Coder ➔ Verifier clean.")
             return
 
         # ── Dual-track routing on failure ─────────────────────────────────────────
@@ -489,11 +574,11 @@ async def _real_loop(
                     {"role": "system", "content": TESTBENCH_GENERATION_SYSTEM_PROMPT},
                     {"role": "user",
                      "content": build_testbench_correction_prompt(
-                         spec, final_dut, tb_code, sim_log
+                         state["spec"], final_dut, tb_code, sim_log
                      )},
                 ]
                 tb_fix_result: list = []
-                async for ev in _llm_stream(tb_messages_fix, tb_fix_result, total_iter):
+                async for ev in _llm_stream(tb_messages_fix, tb_fix_result, total_iter, tracker=tracker):
                     yield ev
 
                 if tb_fix_result and tb_fix_result[0][0] is not None:
@@ -502,6 +587,7 @@ async def _real_loop(
                     if new_tb:
                         tb_code = new_tb
                         final_tb = new_tb
+                        state["tb_code"] = new_tb
                         tb_path.write_text(new_tb, encoding="utf-8")
                         yield _ev("testbench_generated",
                                   total_iterations=total_iter,
@@ -532,14 +618,14 @@ async def _real_loop(
             messages.append({"role": "assistant", "content": f"```verilog\n{final_dut}\n```"})
             messages.append({
                 "role": "user",
-                "content": build_functional_correction_prompt(sim_log, spec, final_dut),
+                "content": build_functional_correction_prompt(sim_log, state["spec"], final_dut),
             })
 
         yield _ev("thought", message=f"[Total {total_iter}/{MAX_TOTAL_ITERATIONS}] Generating corrected DUT...")
 
         # ── Re-generate DUT ───────────────────────────────────────────────
         regen_result: list = []
-        async for ev in _llm_stream(messages, regen_result, total_iter):
+        async for ev in _llm_stream(messages, regen_result, total_iter, tracker=tracker):
             yield ev
 
         if not regen_result or regen_result[0][0] is None:
@@ -556,7 +642,7 @@ async def _real_loop(
         sv_path = WORKSPACE_DIR / sv_filename
         sv_path.write_text(new_sv_code, encoding="utf-8")
         final_dut = new_sv_code
-        dut_filename = sv_filename
+        state["rtl_code"] = new_sv_code
 
         yield _ev("code_generated",
                   iteration=total_iter,
@@ -567,7 +653,7 @@ async def _real_loop(
                   elapsed_ms=regen_elapsed,
                   ttft_ms=regen_ttft,
                   tokens_generated=regen_tok,
-                  tier="tier2_correction")
+                  source="functional_correction")
 
         # ── Re-lint before re-running simulation ─────────────────────────
         # A functional fix can reintroduce a syntax error
@@ -608,7 +694,7 @@ async def _real_loop(
             })
 
             lint_fix_result: list = []
-            async for ev in _llm_stream(messages, lint_fix_result, total_iter):
+            async for ev in _llm_stream(messages, lint_fix_result, total_iter, tracker=tracker):
                 yield ev
 
             if lint_fix_result and lint_fix_result[0][0] is not None:
@@ -619,6 +705,7 @@ async def _real_loop(
                     sv_path = WORKSPACE_DIR / sv_filename
                     sv_path.write_text(fixed_code, encoding="utf-8")
                     final_dut = fixed_code
+                    state["rtl_code"] = fixed_code
                     yield _ev("code_generated",
                               iteration=total_iter,
                               total_iterations=total_iter,
@@ -635,6 +722,7 @@ async def _real_loop(
 
     if functional_status not in ("PASSED",):
         functional_status = "FAILED"
+        yield _ev("agent_status", agent="Verifier", status="Verification Incomplete ✗")
 
     yield _ev("final_result",
               lint_status="PASSED",
@@ -649,7 +737,7 @@ async def _real_loop(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Mock Agent (pre-scripted for demo / local dev)
+#  Mock Agent (pre-scripted for demo / local dev) — 3-Agent Pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 async def _mock_loop(
     spec: str,
@@ -659,9 +747,17 @@ async def _mock_loop(
     from tools.mock_responses import (
         get_mock_responses, get_mock_tb_response,
         get_mock_functional_fix_response, reset_mock_sim_counter,
-        get_mock_sim_result,
+        get_mock_sim_result, get_mock_architect_response,
+        _COUNTER_ASYNC_RESET_BUGGY, _llm_wrap as _mwrap
     )
     from tools.simulator_tool import SimResult
+
+    state: Dict[str, str] = {
+        "spec": spec,
+        "architect_plan": "",
+        "rtl_code": "",
+        "tb_code": ""
+    }
 
     # Reset functional mock counter for this session
     reset_mock_sim_counter()
@@ -671,7 +767,6 @@ async def _mock_loop(
 
     # For mock: use a fresh counter DUT that passes lint but has async reset (fails sim)
     # We hijack the clean counter from mock_responses and replace it with the async-reset version
-    from tools.mock_responses import _COUNTER_ASYNC_RESET_BUGGY, _llm_wrap as _mwrap
 
     # Override last lint response's code with the async-reset buggy version
     # so Tier 2 has something meaningful to catch
@@ -698,12 +793,39 @@ async def _mock_loop(
               mock=True,
               model=f"{MODEL_NAME} [MOCK]")
 
-    final_dut: Optional[str] = None
-    final_tb: Optional[str] = None
+    # ══════════════════════════════════════════════════════════════════════════
+    #  STEP 1: AGENT 1 (Architect)
+    # ══════════════════════════════════════════════════════════════════════════
+    yield _ev("agent_status", agent="Architect", status="Drafting Verification Plan...")
+    yield _ev("thought", message="[Agent 1 · Architect] Analyzing spec to draft Micro-Architecture & Verification Strategy...")
+    await asyncio.sleep(0.5)
+
+    arch_response = get_mock_architect_response(spec)
+    total_iter += 1
+    yield _ev("llm_start", iteration=total_iter, model=f"{MODEL_NAME} [MOCK]")
+    arch_words = arch_response.split(" ")
+    for i, word in enumerate(arch_words):
+        token = word + (" " if i < len(arch_words) - 1 else "")
+        yield _ev("llm_token", token=token)
+        if i % 12 == 0:
+            await asyncio.sleep(0.015)
+    yield _ev("llm_done", chars=len(arch_response), elapsed_ms=650.0, tokens_generated=len(arch_words),
+              ttft_ms=110.0, tokens_per_sec=len(arch_words)/0.65, prefix_caching=False)
+
+    state["architect_plan"] = arch_response
+    yield _ev("thought", message="[Agent 1 · Architect] Plan formulated. Handoff to Coder for RTL synthesis.")
+    yield _ev("agent_status", agent="Architect", status="Plan Complete ✓")
+    await asyncio.sleep(0.3)
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  MOCK TIER 1
+    #  STEP 2: AGENT 2 (Coder)
     # ══════════════════════════════════════════════════════════════════════════
+    yield _ev("agent_status", agent="Coder", status="Synthesizing RTL & Linting...")
+    yield _ev("thought", message="[Agent 2 · Coder] Synthesizing SystemVerilog RTL and executing Verilator lint loop...")
+    await asyncio.sleep(0.3)
+
+    final_dut: Optional[str] = None
+    final_tb: Optional[str] = None
     lint_status = "RUNNING"
     sv_path = None
 
@@ -795,13 +917,16 @@ async def _mock_loop(
                       phase="tier1_lint_result")
             lint_status = "PASSED"
             final_dut = sv_code
-            yield _ev("thought", message="✓ Tier 1 PASSED. Proceeding to Tier 2 functional verification...")
+            state["rtl_code"] = sv_code
+            yield _ev("thought", message="✓ Tier 1 PASSED. Proceeding to Verifier for functional simulation...")
+            yield _ev("agent_status", agent="Coder", status="RTL Lint-Clean ✓")
             await asyncio.sleep(0.3)
             break
     else:
         lint_status = "FAILED"
 
     if lint_status != "PASSED":
+        yield _ev("agent_status", agent="Coder", status="Lint Failed ✗")
         functional_status = "NOT_RUN"
         yield _ev("final_result",
                   lint_status="FAILED",
@@ -813,7 +938,7 @@ async def _mock_loop(
         return
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  MOCK TIER 2 — Testbench generation
+    #  STEP 3: AGENT 3 (Verifier)
     # ══════════════════════════════════════════════════════════════════════════
     if total_iter >= MAX_TOTAL_ITERATIONS:
         yield _ev("final_result",
@@ -825,8 +950,9 @@ async def _mock_loop(
                   message="Global ceiling reached before Tier 2.")
         return
 
+    yield _ev("agent_status", agent="Verifier", status="Simulating & Extracting Waveforms...")
     total_iter += 1
-    yield _ev("thought", message="[Tier 2] Generating self-checking testbench...")
+    yield _ev("thought", message="[Agent 3 · Verifier] Generating self-checking testbench with VCD trace dump...")
     await asyncio.sleep(0.5)
 
     tb_response = get_mock_tb_response(spec)
@@ -848,6 +974,7 @@ async def _mock_loop(
     tb_path = WORKSPACE_DIR / tb_filename
     tb_path.write_text(tb_code, encoding="utf-8")
     final_tb = tb_code
+    state["tb_code"] = tb_code
 
     yield _ev("testbench_generated",
               total_iterations=total_iter,
@@ -882,16 +1009,24 @@ async def _mock_loop(
                   phase=sim.phase,
                   elapsed_ms=sim.elapsed_ms)
 
+        if sim.vcd_data is not None:
+            yield _ev("waveform_ready",
+                      vcd_data=sim.vcd_data,
+                      vcd_size_bytes=sim.vcd_size_bytes)
+        elif sim.vcd_size_bytes > 0:
+            yield _ev("waveform_warning",
+                      message=f"VCD too large ({sim.vcd_size_bytes:,} bytes). Add #5000 $finish to testbench.")
+
         if sim.passed:
             functional_status = "PASSED"
+            yield _ev("agent_status", agent="Verifier", status="Verification Passed ✓")
             yield _ev("final_result",
                       lint_status="PASSED",
                       functional_status="PASSED",
-                      final_dut=final_dut,
-                      final_tb=final_tb,
+                      final_dut=state["rtl_code"],
+                      final_tb=state["tb_code"],
                       total_iterations=total_iter,
-                      message=f"✓ Both tiers PASSED in {total_iter} total iteration(s). "
-                               "Lint clean + simulation PASS.")
+                      message=f"✓ Complete 3-Agent Pipeline PASSED in {total_iter} total iteration(s). Architect ➔ Coder ➔ Verifier clean.")
             return
 
         # Generate functional correction
@@ -920,6 +1055,7 @@ async def _mock_loop(
         sv_path = WORKSPACE_DIR / sv_filename
         sv_path.write_text(fixed_sv, encoding="utf-8")
         final_dut = fixed_sv
+        state["rtl_code"] = fixed_sv
 
         yield _ev("code_generated",
                   iteration=total_iter,
@@ -955,6 +1091,7 @@ async def _mock_loop(
 
     if functional_status not in ("PASSED",):
         functional_status = "FAILED"
+        yield _ev("agent_status", agent="Verifier", status="Verification Incomplete ✗")
 
     yield _ev("final_result",
               lint_status="PASSED",
@@ -963,3 +1100,32 @@ async def _mock_loop(
               final_tb=final_tb,
               total_iterations=total_iter,
               message=f"Lint PASSED but functional verification FAILED after {total_iter} total iteration(s).")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Public Entrypoint
+# ─────────────────────────────────────────────────────────────────────────────
+async def run_agent(
+    spec: str,
+    session_id: Optional[str] = None,
+    max_iterations: Optional[int] = None,
+) -> AsyncGenerator[Dict[str, Any], None]:
+    """
+    Main entry point for running the 3-agent verification loop.
+    Dispatches to _mock_loop in mock mode or _real_loop in live mode.
+    """
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+
+    if MOCK_MODE:
+        async for ev in _mock_loop(spec, session_id):
+            yield ev
+    else:
+        async for ev in _real_loop(spec, session_id):
+            yield ev
+
+
+# Backward compatibility alias
+run_agent_loop = run_agent
+
+

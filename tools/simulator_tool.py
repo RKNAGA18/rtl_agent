@@ -44,6 +44,8 @@ class SimResult:
     elapsed_ms: float = 0.0
     # Which file the error references (used for TB vs DUT routing in agent.py)
     error_file: str = ""   # e.g. "tb_top.sv" or "{session_id}_iter3.sv"
+    vcd_data: Optional[str] = field(default=None)
+    vcd_size_bytes: int = field(default=0)
 
 
 # ─── Top-Module Extractor ─────────────────────────────────────────────────────
@@ -264,7 +266,7 @@ def run_simulation(
         run_cmd = [str(sim_binary)]
 
     stdout_r, stderr_r, rc_r, timed_out_r = _run_subprocess_with_timeout(
-        run_cmd, timeout_s
+        run_cmd, timeout_s, cwd=str(workdir_path)
     )
 
     elapsed_total = (time.perf_counter() - t0) * 1000
@@ -278,12 +280,35 @@ def run_simulation(
             timed_out=True,
             phase="run",
             elapsed_ms=elapsed_total,
+            vcd_data=None,
+            vcd_size_bytes=0,
         )
 
     # Primary pass/fail signal: testbench-emitted strings, not just exit code.
     # $fatal sets nonzero exit but we also want the human-readable message surfaced.
     combined = stdout_r + stderr_r
     passed = "PASS:" in combined and "FAIL:" not in combined
+
+    # VCD capture
+    VCD_MAX_BYTES = 512 * 1024  # 512 KB hard cap
+    vcd_path = workdir_path / "trace.vcd"
+    vcd_data: Optional[str] = None
+    vcd_size_bytes: int = 0
+
+    if vcd_path.exists():
+        vcd_size_bytes = vcd_path.stat().st_size
+        if vcd_size_bytes <= VCD_MAX_BYTES:
+            try:
+                vcd_data = vcd_path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                vcd_data = None
+        else:
+            import logging
+            logging.warning(
+                f"VCD file {vcd_path} is {vcd_size_bytes:,} bytes "
+                f"(limit {VCD_MAX_BYTES:,}). Skipping SSE transfer. "
+                f"Check testbench for missing $finish timeout."
+            )
 
     return SimResult(
         passed=passed,
@@ -293,6 +318,8 @@ def run_simulation(
         timed_out=False,
         phase="run",
         elapsed_ms=elapsed_total,
+        vcd_data=vcd_data,
+        vcd_size_bytes=vcd_size_bytes,
     )
 
 

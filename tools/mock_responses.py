@@ -1065,6 +1065,24 @@ def get_mock_sim_result(dut_path: str, tb_code: str):
         )
     else:
         # Second call onward: corrected DUT passes
+        mock_vcd = (
+            "$date Mon Aug 03 11:00:00 2026 $end\n"
+            "$version Verilator 5.020 $end\n"
+            "$timescale 1ns $end\n"
+            "$scope module tb_counter $end\n"
+            "$var wire 1 ! clk $end\n"
+            "$var wire 1 \" rst $end\n"
+            "$var wire 1 # en $end\n"
+            "$var wire 4 $ count [3:0] $end\n"
+            "$var wire 1 % overflow $end\n"
+            "$upscope $end\n"
+            "$enddefinitions $end\n"
+            "#0\n0!\n1\"\n0#\nb0000 $\n0%\n"
+            "#5\n1!\n#10\n0!\n#15\n1!\n#20\n0!\n0\"\n1#\n"
+            "#25\n1!\nb0001 $\n#30\n0!\n#35\n1!\nb0010 $\n"
+            "#40\n0!\n#45\n1!\nb0011 $\n#50\n0!\n#55\n1!\nb0100 $\n#60\n0!\n"
+            "#65\n1!\nb0101 $\n#70\n0!\n#75\n1!\nb0110 $\n#80\n0!\n"
+        )
         return SimResult(
             passed=True,
             stdout="PASS: all checks passed",
@@ -1073,4 +1091,39 @@ def get_mock_sim_result(dut_path: str, tb_code: str):
             timed_out=False,
             phase="run",
             elapsed_ms=289.1,
+            vcd_data=mock_vcd,
+            vcd_size_bytes=len(mock_vcd.encode("utf-8")),
         )
+
+
+def get_mock_architect_response(spec: str) -> str:
+    """Return a structured Micro-Architecture and Verification Plan for mock mode."""
+    return f"""### Micro-Architecture & Verification Plan
+
+1. Module Overview:
+   - Target Spec: {spec.strip()}
+   - Architecture: Synchronous digital design with clean clock/reset domains.
+
+2. Interface & Port Definitions:
+   - input  logic        clk       // System clock (100MHz / 10ns period)
+   - input  logic        rst       // Synchronous active-high reset
+   - input  logic        en        // Operation enable strobe
+   - output logic [3:0]  count     // Primary registered datapath output
+   - output logic        overflow  // Boundary condition indicator
+
+3. Internal Datapath & Registers:
+   - Registered datapath with explicit width match to prevent truncation warnings.
+   - Separate sequential state registers from combinational next-state computation.
+
+4. Edge Cases & Boundary Handling:
+   - Reset assertion during multi-cycle active operations.
+   - Max count boundary wraparound (4'b1111 -> 4'b0000) with single-cycle overflow flag.
+   - Enable deassertion holding current state without unintended latches.
+
+5. Verification Strategy:
+   - Phase 1: Reset assertion and verification of zeroed outputs.
+   - Phase 2: Sequential step counting under active enable.
+   - Phase 3: Corner-case stimulus checking overflow generation and wraparound.
+   - Phase 4: Watchdog timeout bounded to 5000 time units with VCD trace dump.
+"""
+

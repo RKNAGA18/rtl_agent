@@ -12,9 +12,16 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 
   <!-- Syntax Highlighting — Highlight.js (Verilog/SV support) -->
+  <!-- Syntax Highlighting — Highlight.js (Verilog/SV support) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/verilog.min.js"></script>
+
+  <!-- WaveDrom: renders digital timing diagrams from JSON -->
+  <script src="https://cdn.jsdelivr.net/npm/wavedrom@3.5.0/wavedrom.min.js"></script>
+
+  <!-- D3 v7: required for SVG rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -81,6 +88,36 @@
 
         <div class="divider"></div>
 
+        <!-- 3-Agent Pipeline Status Tracker -->
+        <div style="margin-bottom:12px;">
+          <div class="panel-title" style="margin-bottom:6px;">Multi-Agent Pipeline</div>
+          <div id="pipeline-tracker" class="pipeline-tracker">
+            <div class="agent-pill idle" id="agent-pill-architect">
+              <span class="agent-icon">📐</span>
+              <div class="agent-info">
+                <span class="agent-name">Architect</span>
+                <span class="agent-status-sub" id="status-sub-architect">Idle</span>
+              </div>
+            </div>
+            <div class="pipeline-arrow">➔</div>
+            <div class="agent-pill idle" id="agent-pill-coder">
+              <span class="agent-icon">💻</span>
+              <div class="agent-info">
+                <span class="agent-name">Coder</span>
+                <span class="agent-status-sub" id="status-sub-coder">Idle</span>
+              </div>
+            </div>
+            <div class="pipeline-arrow">➔</div>
+            <div class="agent-pill idle" id="agent-pill-verifier">
+              <span class="agent-icon">⚡</span>
+              <div class="agent-info">
+                <span class="agent-name">Verifier</span>
+                <span class="agent-status-sub" id="status-sub-verifier">Idle</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Global iteration progress -->
         <div style="margin-bottom:10px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -128,14 +165,44 @@
       </div>
     </div>
 
-    <!-- ─── RIGHT PANEL — Code Viewer + Functional Verification ─────────── -->
-    <div class="panel" id="right-panel">
+    <!-- ─── RIGHT PANEL — Code Viewer + Telemetry + Verification ─────────── -->
+    <div class="panel" id="right-panel" style="overflow-y:auto;">
       <div class="panel-header">
-        <span class="panel-title">SystemVerilog Output</span>
+        <span class="panel-title">SystemVerilog &amp; Verification</span>
         <span class="code-stat">
           <span style="color:var(--text-muted);">Lines:</span>
           <span class="code-stat-val" id="code-lines">—</span>
         </span>
+      </div>
+
+      <!-- AMD ROCm Telemetry Panel -->
+      <div id="telemetry-panel" class="tier-section">
+        <div class="tier-section-header">
+          <span class="tier-label">⚡ AMD ROCm Live Telemetry</span>
+          <span id="gpu-badge" class="badge-amd">Radeon · ROCm 6.1 · Triton</span>
+        </div>
+        <div class="telemetry-grid">
+          <div class="stat-card">
+            <div class="stat-label">Time to First Token</div>
+            <div id="stat-ttft" class="stat-value">—</div>
+            <div class="stat-sub">Target: &lt;150 ms</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Generation Speed</div>
+            <div id="stat-tps" class="stat-value">—</div>
+            <div class="stat-sub">tokens / sec</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Tokens</div>
+            <div id="stat-tokens" class="stat-value">—</div>
+            <div class="stat-sub">across all passes</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Agent Wall Time</div>
+            <div id="stat-elapsed" class="stat-value">—</div>
+            <div class="stat-sub">total runtime</div>
+          </div>
+        </div>
       </div>
 
       <!-- ── TIER 1: Lint output ──────────────────────────────────────────── -->
@@ -154,7 +221,7 @@
         </div>
 
         <!-- Code area -->
-        <div id="code-viewer" style="flex:1;overflow:auto;max-height:320px;">
+        <div id="code-viewer" style="overflow:auto;max-height:300px;">
           <div id="code-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:120px;color:var(--text-muted);gap:12px;font-size:12px;padding:32px;text-align:center;">
             <div style="font-size:36px;opacity:0.18;">⬡</div>
             <div>Generated SystemVerilog will appear here</div>
@@ -205,6 +272,23 @@
             <button class="action-btn" id="copy-tb-btn" style="display:none;" onclick="copyTestbench()">⎘ Copy TB</button>
             <button class="action-btn primary" id="download-tb-btn" style="display:none;" onclick="downloadTestbench()">↓ Download TB</button>
           </div>
+        </div>
+      </div>
+
+      <!-- Waveform Explorer Panel -->
+      <div id="waveform-panel" class="tier-section">
+        <div class="tier-section-header">
+          <span class="tier-label">📈 Simulation Waveforms</span>
+          <div class="panel-actions">
+            <span id="vcd-size-badge" class="badge-subtle">No trace</span>
+            <button id="download-vcd-btn" class="btn-ghost" disabled onclick="downloadVCD()">Download .vcd</button>
+          </div>
+        </div>
+        <div id="waveform-container">
+          <div id="waveform-placeholder" class="placeholder-box">
+            <span>Run a verification loop to view simulation waveforms</span>
+          </div>
+          <div id="wavedrom-target" style="display:none;width:100%;overflow-x:auto;"></div>
         </div>
       </div>
 

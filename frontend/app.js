@@ -27,6 +27,7 @@ const state = {
   simIterations: [],      // [{iteration, passed, stdout, stderr, phase}]
   totalIterations: 0,
   maxTotal: 6,
+  vcdData: null,
 };
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -116,6 +117,8 @@ async function handleRun() {
   clearFeed();
   clearCodeViewer();
   clearFunctionalPanel();
+  clearWaveformsAndTelemetry();
+  resetAgentPipeline();
   state.iterations = [];
   state.currentSession = null;
   state.streamingEl = null;
@@ -177,6 +180,11 @@ function handleEvent(ev) {
     case 'connected':
       break;
 
+    case 'agent_status':
+      updateAgentPipeline(ev.agent, ev.status);
+      addFeedEvent('agent', '🤖', `[Agent] ${ev.agent}`, ev.status, 'thought');
+      break;
+
     case 'agent_start':
       state.maxTotal = ev.max_total_iterations || 6;
       addFeedEvent('iteration', '🚀', 'AGENT STARTED',
@@ -201,6 +209,44 @@ function handleEvent(ev) {
     case 'thought':
       addFeedEvent('thought', '🧠', 'THINKING', ev.message, 'thought');
       break;
+
+    case 'telemetry_update': {
+      if (ev.ttft_ms > 0) {
+        const ttftEl = $('stat-ttft');
+        if (ttftEl) ttftEl.textContent = `${ev.ttft_ms} ms`;
+      }
+      if (ev.tokens_per_sec > 0) {
+        const tpsEl = $('stat-tps');
+        if (tpsEl) tpsEl.textContent = `${ev.tokens_per_sec}`;
+      }
+      if (ev.total_tokens > 0) {
+        const tokEl = $('stat-tokens');
+        if (tokEl) tokEl.textContent = `${ev.total_tokens.toLocaleString()}`;
+      }
+      if (ev.elapsed_sec > 0) {
+        const elEl = $('stat-elapsed');
+        if (elEl) elEl.textContent = `${ev.elapsed_sec}s`;
+      }
+      break;
+    }
+
+    case 'waveform_ready': {
+      state.vcdData = ev.vcd_data;
+      const sizeKb = (ev.vcd_size_bytes / 1024).toFixed(1);
+      const badge = $('vcd-size-badge');
+      if (badge) badge.textContent = `${sizeKb} KB VCD`;
+      const dlBtn = $('download-vcd-btn');
+      if (dlBtn) dlBtn.disabled = false;
+      renderWaveform(ev.vcd_data);
+      break;
+    }
+
+    case 'waveform_warning': {
+      const badge = $('vcd-size-badge');
+      if (badge) badge.textContent = 'VCD truncated';
+      toast(ev.message, 'warning');
+      break;
+    }
 
     case 'llm_start':
       startLLMStream();
@@ -431,6 +477,36 @@ function setTierPill(tier, status) {
   el.textContent = labels[status] || status.toUpperCase();
 }
 
+// ─── Multi-Agent Pipeline Tracker ───────────────────────────────────────────
+function resetAgentPipeline() {
+  const agents = ['architect', 'coder', 'verifier'];
+  agents.forEach(a => {
+    const pill = $(`agent-pill-${a}`);
+    const sub = $(`status-sub-${a}`);
+    if (pill) pill.className = 'agent-pill idle';
+    if (sub) sub.textContent = 'Idle';
+  });
+}
+
+function updateAgentPipeline(agent, status) {
+  if (!agent) return;
+  const key = agent.toLowerCase();
+  const pill = $(`agent-pill-${key}`);
+  const sub = $(`status-sub-${key}`);
+  if (!pill) return;
+
+  if (sub) sub.textContent = status;
+
+  const s = (status || '').toLowerCase();
+  if (status.includes('✓') || s.includes('clean') || s.includes('passed') || s.includes('complete')) {
+    pill.className = 'agent-pill passed';
+  } else if (status.includes('✗') || s.includes('failed')) {
+    pill.className = 'agent-pill failed';
+  } else {
+    pill.className = 'agent-pill active';
+  }
+}
+
 // ─── Functional Verification Panel ────────────────────────────────────────────
 function clearFunctionalPanel() {
   if (simIterationsEl) simIterationsEl.innerHTML = '';
@@ -444,6 +520,7 @@ function clearFunctionalPanel() {
   setTierPill('tier2', 'idle');
   setTierBadge('tier1', 'idle');
   setTierBadge('tier2', 'idle');
+  resetAgentPipeline();
 }
 
 function renderTestbench(code, filename) {
@@ -762,6 +839,219 @@ function toast(msg, type = 'info') {
   el.innerHTML = `<span>${icons[type]}</span><span>${escHtml(msg)}</span>`;
   toastContainer.appendChild(el);
   setTimeout(() => el.remove(), 4500);
+}
+
+// ─── Waveforms & Telemetry ───────────────────────────────────────────────────
+function clearWaveformsAndTelemetry() {
+  state.vcdData = null;
+  const ttftEl = $('stat-ttft');
+  const tpsEl = $('stat-tps');
+  const tokEl = $('stat-tokens');
+  const elEl = $('stat-elapsed');
+  if (ttftEl) ttftEl.textContent = '—';
+  if (tpsEl) tpsEl.textContent = '—';
+  if (tokEl) tokEl.textContent = '—';
+  if (elEl) elEl.textContent = '—';
+
+  const badge = $('vcd-size-badge');
+  if (badge) badge.textContent = 'No trace';
+  const dlBtn = $('download-vcd-btn');
+  if (dlBtn) dlBtn.disabled = true;
+  const placeholder = $('waveform-placeholder');
+  if (placeholder) {
+    placeholder.textContent = 'Run a verification loop to view simulation waveforms';
+    placeholder.style.display = 'block';
+  }
+  const target = $('wavedrom-target');
+  if (target) {
+    target.style.display = 'none';
+    target.innerHTML = '';
+  }
+}
+
+function vcdToWaveDrom(vcdText, maxCycles = 20) {
+  if (!vcdText) return null;
+  const lines = vcdText.split('\n');
+  const signals = {}; // id -> { name, type, width }
+
+  // Pass 1: Parse variable declarations
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('$var')) {
+      const parts = trimmed.split(/\s+/);
+      // Format: $var <type> <width> <id> <name> [bounds] $end
+      if (parts.length >= 5) {
+        const type = parts[1];
+        const width = parseInt(parts[2], 10) || 1;
+        const id = parts[3];
+        const name = parts[4];
+        signals[id] = { name, type, width, wave: [], values: [] };
+      }
+    }
+    if (trimmed.startsWith('$enddefinitions')) {
+      break;
+    }
+  }
+
+  const sigIds = Object.keys(signals);
+  if (sigIds.length === 0) return null;
+
+  // Pass 2: Parse value changes
+  let currentTime = 0;
+  const timeSteps = [];
+  const signalHistory = {}; // id -> [{ time, val }]
+  for (const id of sigIds) {
+    signalHistory[id] = [];
+  }
+
+  let parsingValues = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('$dumpvars') || trimmed.startsWith('$enddefinitions')) {
+      parsingValues = true;
+      continue;
+    }
+    if (!parsingValues) continue;
+
+    if (trimmed.startsWith('#')) {
+      currentTime = parseInt(trimmed.slice(1), 10);
+      if (!isNaN(currentTime)) timeSteps.push(currentTime);
+      continue;
+    }
+
+    // Scalar: '0!' or '1"' or 'x$' or 'z$'
+    if (trimmed.length >= 2 && (trimmed[0] === '0' || trimmed[0] === '1' || trimmed[0] === 'x' || trimmed[0] === 'z' || trimmed[0] === 'X' || trimmed[0] === 'Z')) {
+      const val = trimmed[0].toLowerCase();
+      const id = trimmed.slice(1).trim();
+      if (signalHistory[id]) {
+        signalHistory[id].push({ time: currentTime, val });
+      }
+    }
+    // Vector: 'b0010 $' or 'b0000 $'
+    else if (trimmed.startsWith('b') || trimmed.startsWith('B')) {
+      const spaceIdx = trimmed.indexOf(' ');
+      if (spaceIdx !== -1) {
+        const rawVal = trimmed.slice(1, spaceIdx).trim();
+        const id = trimmed.slice(spaceIdx + 1).trim();
+        if (signalHistory[id]) {
+          let hexVal;
+          try {
+            hexVal = parseInt(rawVal, 2).toString(16).toUpperCase();
+            if (isNaN(parseInt(rawVal, 2))) hexVal = rawVal;
+          } catch (_) {
+            hexVal = rawVal;
+          }
+          signalHistory[id].push({ time: currentTime, val: hexVal });
+        }
+      }
+    }
+  }
+
+  // Sample into uniform cycle slots (up to maxCycles)
+  const uniqueTimes = [...new Set(timeSteps)].sort((a, b) => a - b).slice(0, maxCycles * 2);
+  const sampleTimes = uniqueTimes.length > 0 ? uniqueTimes : [0, 5, 10, 15, 20, 25, 30, 35];
+
+  const waveLanes = [];
+  for (const [id, sig] of Object.entries(signals)) {
+    // Filter out internal verilator signals starting with '__' or '_' if many signals
+    if (sig.name.startsWith('_') && sigIds.length > 6) continue;
+
+    let waveStr = '';
+    const dataVals = [];
+    let lastVal = 'x';
+
+    for (let i = 0; i < sampleTimes.length; i++) {
+      const t = sampleTimes[i];
+      const history = signalHistory[id];
+      const entry = history ? [...history].reverse().find(h => h.time <= t) : null;
+      const currentVal = entry ? entry.val : lastVal;
+
+      if (sig.name.toLowerCase().includes('clk') || sig.name.toLowerCase().includes('clock')) {
+        waveStr += i % 2 === 0 ? 'p' : '.';
+      } else if (currentVal === '1' || currentVal === '0') {
+        waveStr += (currentVal === lastVal && i > 0) ? '.' : currentVal;
+      } else if (currentVal !== 'x' && currentVal !== 'z') {
+        if (currentVal !== lastVal || i === 0) {
+          waveStr += '=';
+          dataVals.push(currentVal);
+        } else {
+          waveStr += '.';
+        }
+      } else {
+        waveStr += (currentVal === lastVal && i > 0) ? '.' : 'x';
+      }
+      lastVal = currentVal;
+    }
+
+    const lane = { name: sig.name, wave: waveStr };
+    if (dataVals.length > 0) lane.data = dataVals;
+    waveLanes.push(lane);
+  }
+
+  return {
+    signal: waveLanes,
+    head: { text: 'Verilator Simulation Waveform (AMD ROCm)', tick: 0 },
+    config: { hscale: 1 }
+  };
+}
+
+function renderWaveform(vcdText) {
+  const placeholder = $('waveform-placeholder');
+  const target = $('wavedrom-target');
+
+  if (!vcdText) {
+    if (placeholder) {
+      placeholder.textContent = 'No waveform trace available.';
+      placeholder.style.display = 'block';
+    }
+    if (target) target.style.display = 'none';
+    return;
+  }
+
+  try {
+    const waveJson = vcdToWaveDrom(vcdText);
+    if (!waveJson || waveJson.signal.length === 0) {
+      if (placeholder) {
+        placeholder.textContent = 'No signal transitions captured in trace.';
+        placeholder.style.display = 'block';
+      }
+      if (target) target.style.display = 'none';
+      return;
+    }
+
+    if (placeholder) placeholder.style.display = 'none';
+    if (target) {
+      target.style.display = 'block';
+      target.innerHTML = '';
+      const script = document.createElement('script');
+      script.type = 'WaveDrom';
+      script.textContent = JSON.stringify(waveJson);
+      target.appendChild(script);
+      if (window.WaveDrom && typeof WaveDrom.ProcessAll === 'function') {
+        WaveDrom.ProcessAll();
+      }
+    }
+  } catch (err) {
+    console.warn('WaveDrom render failed:', err);
+    if (placeholder) {
+      placeholder.textContent = `Waveform render notice: ${err.message}`;
+      placeholder.style.display = 'block';
+    }
+  }
+}
+
+function downloadVCD() {
+  if (!state.vcdData) {
+    toast('No VCD data available to download.', 'info');
+    return;
+  }
+  const blob = new Blob([state.vcdData], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${state.currentSession || 'simulation'}_trace.vcd`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────

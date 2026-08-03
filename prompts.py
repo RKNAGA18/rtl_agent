@@ -117,8 +117,61 @@ endmodule
 """
 
 
-# --- User Prompt Builder ------------------------------------------------------
-def build_user_prompt(spec: str) -> str:
+# --- Architect System Prompt (Agent 1) ----------------------------------------
+ARCHITECT_SYSTEM_PROMPT = """\
+You are a Principal Hardware Architect and VLSI Verification Strategist.
+Given a natural-language hardware specification, your job is to create a concise, rigorous Micro-Architecture Specification and Verification Strategy document.
+
+You must outline:
+1. Module Name & Parameter definitions (with default values and bit-widths).
+2. Complete Port List (Direction, explicit width, `logic` type, detailed function).
+3. Internal Architecture & State (FSM state encodings, registers/counters, datapath).
+4. Edge Cases & Boundary Conditions (overflow, underflow, backpressure, reset states).
+5. Verification Strategy & Key Test Scenarios (reset test, normal throughput, corner cases, timeout bounds).
+
+Be technical, concise, and unambiguous. Do NOT write full SystemVerilog code blocks. Focus on architectural precision and verification completeness.
+"""
+
+
+def build_architect_prompt(spec: str) -> str:
+    return f"""Analyze the following specification and produce a Micro-Architecture & Verification Plan.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ HARDWARE SPECIFICATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{spec.strip()}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ARCHITECTURAL PLAN REQUIREMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Module name, parameters, explicit port list (widths, directions, active levels)
+- Reset strategy (synchronous active-high unless specified)
+- Internal registers, state machines, timing constraints
+- Edge cases and comprehensive verification checklist
+"""
+
+
+# --- User Prompt Builder (Agent 2: Coder) -------------------------------------
+def build_user_prompt(spec: str, architect_plan: str = "") -> str:
+    if architect_plan:
+        return f"""Design and implement the SystemVerilog RTL module following the Architectural Plan and Hardware Specification.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ARCHITECTURAL PLAN (from Lead Architect)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{architect_plan.strip()}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ HARDWARE SPECIFICATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{spec.strip()}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ DELIVERABLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Output a single, complete SystemVerilog module inside a ```verilog code fence adhering to the Seven Golden Rules.
+No text after the closing fence.
+"""
     return f"""Design and implement the following digital hardware module in SystemVerilog.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -132,6 +185,10 @@ def build_user_prompt(spec: str) -> str:
 Output a single, complete SystemVerilog module inside a ```verilog code fence.
 No other text after the closing fence.
 """
+
+
+def build_coder_user_prompt(spec: str, architect_plan: str) -> str:
+    return build_user_prompt(spec, architect_plan)
 
 
 # --- Tier 1 Correction Prompt (REFLECTION MODE) -------------------------------
@@ -230,12 +287,38 @@ Rules:
 9. Array/struct literal initializers need a leading apostrophe: `'{...}`,
    never a bare `{...}` in a declaration.
 10. Declare all testbench signals as `logic`. Never use bare `wire`.
+
+MANDATORY VCD RULES (violating these will cause test failure):
+1. Every testbench module MUST contain this exact initial block:
+   initial begin
+     $dumpfile("trace.vcd");
+     $dumpvars(0, <top_module_name>);
+   end
+   Replace <top_module_name> with the actual testbench module name.
+
+2. Every testbench MUST include a simulation timeout guard:
+   initial begin
+     #5000;
+     $display("TIMEOUT: simulation exceeded 5000 time units");
+     $finish;
+   end
+   This prevents infinite loops and keeps VCD files under 100KB.
+
+3. Do NOT use #delays larger than 100 in any single statement.
+   Use loops with small delays instead.
 """
 
 
-def build_testbench_prompt(spec: str, dut_code: str) -> str:
-    return f"""Write a SELF-CHECKING Verilator testbench for the RTL module below.
+def build_testbench_prompt(spec: str, dut_code: str, architect_plan: str = "") -> str:
+    plan_section = f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ VERIFICATION STRATEGY (from Lead Architect)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{architect_plan.strip()}
+""" if architect_plan else ""
 
+    return f"""Write a SELF-CHECKING Verilator testbench for the RTL module below.
+{plan_section}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  ORIGINAL SPECIFICATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -253,18 +336,32 @@ def build_testbench_prompt(spec: str, dut_code: str) -> str:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Instantiate the DUT connecting ALL ports by name.
 2. Drive a 10ns clock and synchronous active-high reset (hold >= 3 cycles).
-3. Apply at least 3 distinct stimulus cases:
+3. Apply at least 3 distinct stimulus cases (and cover Architect's test scenarios):
    - Reset behavior (outputs reach known state)
    - Normal operation (primary functional path)
    - Edge/boundary case (overflow, max/min, wraparound)
 4. Self-check with `if (actual !== expected)`.
 5. On ANY mismatch: $display("FAIL: <specific reason>"); $fatal;
 6. On ALL checks passing: $display("PASS: all checks passed"); $finish;
-7. MANDATORY watchdog: $fatal("FAIL: timeout") if cycle limit is exceeded.
-8. Module name must start with `tb_`. Use `logic` for all signals.
+7. MANDATORY VCD DUMP:
+   initial begin
+     $dumpfile("trace.vcd");
+     $dumpvars(0, tb_module);
+   end
+8. MANDATORY simulation timeout guard:
+   initial begin
+     #5000;
+     $display("TIMEOUT: simulation exceeded 5000 time units");
+     $finish;
+   end
+9. Module name must start with `tb_`. Use `logic` for all signals.
 
 Output ONLY the ```verilog block.
 """
+
+
+def build_verifier_testbench_prompt(spec: str, dut_code: str, architect_plan: str = "") -> str:
+    return build_testbench_prompt(spec, dut_code, architect_plan)
 
 
 # --- Tier 2 Functional Correction Prompt (REFLECTION MODE) --------------------
