@@ -562,6 +562,8 @@ async def _real_loop(
                 sim.error_file == "tb_top.sv"
                 or "tb_top.sv" in sim_log
                 or "tb_" in sim_log
+                or "Cannot find file containing module" in sim_log
+                or "top-module" in sim_log
             )
 
             if tb_error:

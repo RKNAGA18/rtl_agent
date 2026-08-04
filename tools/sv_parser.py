@@ -40,6 +40,32 @@ _MODULE_PATTERN = re.compile(
 _SV_SANITY = re.compile(r"\bmodule\b", re.IGNORECASE)
 
 
+def strip_comments(code: str) -> str:
+    """Strip single-line (//...) and multi-line (/*...*/) comments from SV code."""
+    code_no_block = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
+    return re.sub(r'//[^\n]*', '', code_no_block)
+
+
+def extract_module_name(code: str) -> Optional[str]:
+    """
+    Extract the top-level module name from SystemVerilog code.
+    Anchored to ensure the identifier is followed by '(', ';', or '#'.
+    Ignores occurrences inside comments.
+    """
+    if not code:
+        return None
+    clean_code = strip_comments(code)
+    # Prefer tb_ prefixed module if present in testbench context
+    tb_match = re.search(r'\bmodule\s+(tb_\w+)\s*[(;#]', clean_code)
+    if tb_match:
+        return tb_match.group(1)
+    generic_match = re.search(r'\bmodule\s+(\w+)\s*[(;#]', clean_code)
+    if generic_match:
+        return generic_match.group(1)
+    return None
+
+
+
 def extract_systemverilog(
     raw_text: str,
     dump_on_failure: bool = False,
