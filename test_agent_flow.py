@@ -7,7 +7,9 @@ async def main():
         events.append(ev)
     print(f"Total events emitted: {len(events)}")
     print(f"Last event type: {events[-1]['type']}")
-    print(f"Final result: {events[-1]['data']}")
+    print(f"Final result message: {events[-1].get('message', events[-1])}")
+    print(f"Lint Status: {events[-1].get('lint_status')}")
+    print(f"Functional Status: {events[-1].get('functional_status')}")
 
 if __name__ == "__main__":
     asyncio.run(main())

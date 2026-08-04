@@ -233,6 +233,7 @@ def run_simulation(
     compile_cmd = _verilator_cmd([
         "verilator",
         "--binary",
+        "--trace",      # Enable VCD waveform tracing for $dumpfile / $dumpvars
         "--timing",
         "-Wall",        # all warnings
         "-Wno-style",   # suppress DECLFILENAME and cosmetic warnings

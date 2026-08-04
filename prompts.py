@@ -287,6 +287,7 @@ Rules:
 9. Array/struct literal initializers need a leading apostrophe: `'{...}`,
    never a bare `{...}` in a declaration.
 10. Declare all testbench signals as `logic`. Never use bare `wire`.
+11. NEVER declare the same signal twice (e.g. `logic clk;` at the top and again later in the module). Each signal must have exactly ONE declaration.
 
 MANDATORY VCD RULES (violating these will cause test failure):
 1. Every testbench module MUST contain this exact initial block:
@@ -387,7 +388,9 @@ This is a BEHAVIORAL bug, not a syntax error.
 1. Read the exact FAIL message from the simulation output above.
 2. Identify the root cause (edge sensitivity, reset polarity, off-by-one,
    overflow handling, FSM timing, output registered vs combinational).
-3. Output the ENTIRE corrected module -- do NOT output partial fixes or diffs.
+3. For serial protocols (e.g. UART TX): ensure the stop bit (1'b1) is held
+   for the FULL final baud period before transitioning back to IDLE.
+4. Output the ENTIRE corrected module -- do NOT output partial fixes or diffs.
 
 Original specification:
 {spec.strip()}
@@ -445,6 +448,7 @@ The DUT is FROZEN -- do NOT change it. Regenerate ONLY the testbench.
  CORRECTION INSTRUCTIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Fix ONLY the testbench errors above. Common testbench bugs:
+  - Duplicate signal declarations: check for duplicate `logic clk;` or `logic rst;` declared multiple times and remove duplicates
   - Clock arithmetic: MUST use #(CLK_PERIOD/2) not #CLK_PERIOD/2
   - Compound assignment operators (+=, -=) are not allowed -- use the full expression
   - Array/struct literals need a leading apostrophe: '{{...}} not bare {{...}}
