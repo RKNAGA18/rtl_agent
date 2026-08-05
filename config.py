@@ -147,9 +147,9 @@ MAX_TOKENS:  int   = int(os.getenv("MAX_TOKENS",   "4096"))
 TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.05"))  # near-zero = deterministic RTL
 
 # ─── Agent Iteration Limits ───────────────────────────────────────────────────
-MAX_LINT_ITERATIONS:       int = int(os.getenv("MAX_LINT_ITERATIONS",       "3"))
-MAX_FUNCTIONAL_ITERATIONS: int = int(os.getenv("MAX_FUNCTIONAL_ITERATIONS", "3"))
-MAX_TOTAL_ITERATIONS:      int = int(os.getenv("MAX_TOTAL_ITERATIONS",      "8"))
+MAX_LINT_ITERATIONS:       int = int(os.getenv("MAX_LINT_ITERATIONS",       "5"))
+MAX_FUNCTIONAL_ITERATIONS: int = int(os.getenv("MAX_FUNCTIONAL_ITERATIONS", "5"))
+MAX_TOTAL_ITERATIONS:      int = int(os.getenv("MAX_TOTAL_ITERATIONS",      "10"))
 MAX_ITERATIONS:            int = MAX_LINT_ITERATIONS   # backward-compat alias
 
 VERILATOR_TIMEOUT:  int = int(os.getenv("VERILATOR_TIMEOUT",  "30"))

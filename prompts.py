@@ -289,6 +289,13 @@ Rules:
 10. Declare all testbench signals as `logic`. Never use bare `wire`.
 11. NEVER declare the same signal twice (e.g. `logic clk;` at the top and again later in the module). Each signal must have exactly ONE declaration.
 
+CRITICAL SIMULATION RULES FOR SYSTEMVERILOG TESTBENCHES:
+12. SIGNAL INITIALIZATION: Always initialize all DUT inputs to 0 or appropriate idle states at time #0 before asserting the reset signal.
+13. CLOCK SYNCHRONIZATION: Never evaluate outputs at the exact same time step the clock edge transitions. Wait for #1 or the negative edge (@(negedge clk)) to sample outputs to prevent Delta-Cycle race conditions.
+14. TIMING TIMEOUTS: Include a sufficient delay (#1000 or higher) before $finish to ensure multi-cycle operations (like serial TX/RX or FSMs) have time to complete.
+15. NON-BLOCKING ASSIGNMENTS: Inside the DUT, strictly use non-blocking assignments (<=) for sequential logic and blocking assignments (=) for combinational logic.
+16. ASSERTS: Use $display and $fatal to clearly log exactly which cycle or state failed, printing both the Expected and Got values (e.g. $display("FAIL: Expected 0x%h, Got 0x%h", expected, actual); $fatal;).
+
 MANDATORY VCD RULES (violating these will cause test failure):
 1. Every testbench module MUST contain this exact initial block:
    initial begin
@@ -299,8 +306,8 @@ MANDATORY VCD RULES (violating these will cause test failure):
 
 2. Every testbench MUST include a simulation timeout guard:
    initial begin
-     #5000;
-     $display("TIMEOUT: simulation exceeded 5000 time units");
+     #50000;
+     $display("TIMEOUT: simulation exceeded time limit");
      $finish;
    end
    This prevents infinite loops and keeps VCD files under 100KB.
@@ -336,26 +343,27 @@ def build_testbench_prompt(spec: str, dut_code: str, architect_plan: str = "") -
  TESTBENCH REQUIREMENTS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Instantiate the DUT connecting ALL ports by name.
-2. Drive a 10ns clock and synchronous active-high reset (hold >= 3 cycles).
-3. Apply at least 3 distinct stimulus cases (and cover Architect's test scenarios):
+2. SIGNAL INITIALIZATION: Initialize all DUT inputs to 0 or appropriate idle states at time #0 before asserting reset.
+3. Drive a 10ns clock and synchronous active-high reset (hold >= 3 cycles).
+4. CLOCK SYNCHRONIZATION: Never sample outputs at the exact posedge of clk. Wait for #1 or @(negedge clk) before checking outputs with if (actual !== expected) to prevent delta-cycle race conditions.
+5. Apply at least 3 distinct stimulus cases (and cover Architect's test scenarios):
    - Reset behavior (outputs reach known state)
    - Normal operation (primary functional path)
    - Edge/boundary case (overflow, max/min, wraparound)
-4. Self-check with `if (actual !== expected)`.
-5. On ANY mismatch: $display("FAIL: <specific reason>"); $fatal;
-6. On ALL checks passing: $display("PASS: all checks passed"); $finish;
-7. MANDATORY VCD DUMP:
+6. On ANY mismatch: $display("FAIL: <specific reason> | Expected: 0x%h, Got: 0x%h", expected, actual); $fatal;
+7. On ALL checks passing: $display("PASS: all checks passed"); $finish;
+8. MANDATORY VCD DUMP:
    initial begin
      $dumpfile("trace.vcd");
      $dumpvars(0, tb_module);
    end
-8. MANDATORY simulation timeout guard:
+9. MANDATORY simulation timeout guard:
    initial begin
-     #5000;
-     $display("TIMEOUT: simulation exceeded 5000 time units");
-     $finish;
+     #100000;
+     $display("TIMEOUT: simulation exceeded time limit");
+     $fatal(1, "FAIL: simulation timeout");
    end
-9. Module name must start with `tb_`. Use `logic` for all signals.
+10. Module name must start with `tb_`. Use `logic` for all signals. No duplicate signal declarations.
 
 Output ONLY the ```verilog block.
 """
