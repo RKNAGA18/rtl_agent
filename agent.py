@@ -600,6 +600,11 @@ async def _real_loop(
                 if tb_fix_result and tb_fix_result[0][0] is not None:
                     tb_fix_resp = tb_fix_result[0][0]
                     new_tb = extract_systemverilog(tb_fix_resp)
+                    if not new_tb and tb_fix_resp and "module " in tb_fix_resp:
+                        resp_clean = tb_fix_resp.strip()
+                        if "endmodule" not in resp_clean:
+                            resp_clean += "\nendmodule\n"
+                        new_tb = extract_systemverilog(f"```verilog\n{resp_clean}\n```")
                     if new_tb:
                         tb_code = new_tb
                         final_tb = new_tb
@@ -613,6 +618,8 @@ async def _real_loop(
                                   ttft_ms=tb_fix_result[0][3],
                                   tokens_generated=tb_fix_result[0][2],
                                   source="tb_correction")
+                    else:
+                        yield _ev("thought", message="[Tier 2] Could not extract valid SV testbench from correction response.")
                 continue  # retry simulation with fixed testbench
 
             else:
@@ -647,6 +654,11 @@ async def _real_loop(
                 if tb_fix_result and tb_fix_result[0][0] is not None:
                     tb_fix_resp = tb_fix_result[0][0]
                     new_tb = extract_systemverilog(tb_fix_resp)
+                    if not new_tb and tb_fix_resp and "module " in tb_fix_resp:
+                        resp_clean = tb_fix_resp.strip()
+                        if "endmodule" not in resp_clean:
+                            resp_clean += "\nendmodule\n"
+                        new_tb = extract_systemverilog(f"```verilog\n{resp_clean}\n```")
                     if new_tb:
                         tb_code = new_tb
                         final_tb = new_tb
@@ -660,6 +672,8 @@ async def _real_loop(
                                   ttft_ms=tb_fix_result[0][3],
                                   tokens_generated=tb_fix_result[0][2],
                                   source="tb_functional_correction")
+                    else:
+                        yield _ev("thought", message="[Tier 2] Could not extract valid SV testbench from functional correction response.")
                 continue  # re-run simulation with the corrected testbench
 
             else:

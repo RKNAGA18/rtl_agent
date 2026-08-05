@@ -92,6 +92,8 @@ SEVEN GOLDEN RULES -- Verilator will reject code that violates these:
     - Binary constants: NEVER use hex digits (a-f, A-F) in `4'b` binary constants. Use `4'hA` for hex, or `4'b1010` for binary.
 18. SYNCHRONOUS FIFO SIMULTANEOUS R/W:
     When `wr_en && !full` and `rd_en && !empty` occur simultaneously on the same clock edge, data is written and read together, and the occupancy count must remain unchanged (`count <= count;`).
+19. COMPLETE RESET CLEARING FOR ALL REGISTERS:
+    In sequential logic (shift registers, counters, FIFOs, FSMs, pipelines), when reset is asserted, you MUST reset EVERY internal register and output register (e.g. `shift_reg <= '0; data_out <= '0; valid <= 1'b0; count <= '0;`). Never leave output registers or internal state unreset.
 
 Example of the exact expected format:
 
@@ -322,6 +324,9 @@ CRITICAL SIMULATION RULES FOR SYSTEMVERILOG TESTBENCHES:
 24. SYNCHRONOUS RESET SAMPLING: Synchronous reset takes effect on posedge clk. Drive reset for >= 2 clock cycles, then deassert at @(negedge clk). Do NOT assert reset mid-cycle and expect immediate combinational clearing.
 25. ALU SUBTRACTION CONVENTIONS: For ALU subtraction (a - b): expect `carry_out` (borrow flag) to be 1 when `a < b` (underflow), and 0 when `a >= b`. Expect `zero` to be 1 when `result == '0`.
 26. STRICT SYNTAX & CONCISE CODE: All `$display` and `$fatal` calls must have perfectly matched quotes and parentheses. Keep testbenches concise (< 120 lines) to prevent unexpected EOF truncation.
+27. NO TASKS OR FUNCTIONS: DO NOT declare any `task ... endtask` or `function ... endfunction` in the testbench. All test stimulus, resets, `@(negedge clk)` waits, and assertion checks MUST be written linearly inside a single main `initial begin ... end` block. This completely eliminates nested task and duplicate declaration errors.
+28. VARIABLE DECLARATIONS: Declare all loop indices (e.g. `int i;`, `int cycle;`) and test variables at the top of the testbench module. Never use undeclared variables.
+29. ARRAY LITERAL PATTERNS: Array initializers MUST use the tick syntax `'{...}` (e.g., `logic [7:0] expected_data [0:3] = '{8'h01, 8'h02, 8'h03, 8'h04};`).
 
 MANDATORY VCD RULES (violating these will cause test failure):
 1. Every testbench module MUST contain this exact initial block:
@@ -491,14 +496,16 @@ The DUT is FROZEN -- do NOT change it. Regenerate ONLY the testbench.
  CORRECTION INSTRUCTIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Fix ONLY the testbench errors above. Common testbench bugs:
+  - NO TASKS: DO NOT declare any `task` or `function`. Put all stimulus and assertions linearly inside a single `initial begin ... end` block.
+  - Variable declarations: declare all loop indices (int i;) and test variables at the top of the module.
   - Duplicate signal declarations: check for duplicate `logic clk;` or `logic rst;` declared multiple times and remove duplicates
   - Clock arithmetic: MUST use #(CLK_PERIOD/2) not #CLK_PERIOD/2
   - Compound assignment operators (+=, -=) are not allowed -- use the full expression
   - Array/struct literals need a leading apostrophe: '{{...}} not bare {{...}}
   - Port connections: instantiate DUT using named ports (.clk(clk), .rst(rst))
   - Missing begin/end around multi-statement always/initial blocks
-  - $fatal requires a string: $fatal("FAIL: reason") not $fatal;
-  - Watchdog: use an integer cycle counter, not an unbounded wait()
+  - $fatal requires a string: $fatal(1, "FAIL: reason");
+  - Watchdog: use an integer cycle counter or #100000 timeout block, not an unbounded wait()
   - All signals must be declared as logic before use
 
 Original spec for reference:
