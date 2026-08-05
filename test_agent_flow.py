@@ -7,7 +7,8 @@ async def main():
         events.append(ev)
     print(f"Total events emitted: {len(events)}")
     print(f"Last event type: {events[-1]['type']}")
-    print(f"Final result message: {events[-1].get('message', events[-1])}")
+    msg = str(events[-1].get('message', events[-1])).encode('ascii', 'replace').decode('ascii')
+    print(f"Final result message: {msg}")
     print(f"Lint Status: {events[-1].get('lint_status')}")
     print(f"Functional Status: {events[-1].get('functional_status')}")
 

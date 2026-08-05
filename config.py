@@ -171,7 +171,11 @@ SERVER_PORT: int = int(os.getenv("SERVER_PORT", "7860"))
 BASE_DIR:      Path = Path(__file__).parent
 WORKSPACE_DIR: Path = BASE_DIR / "workspace"
 FRONTEND_DIR:  Path = BASE_DIR / "frontend"
+LOGS_DIR:      Path = BASE_DIR / "logs"
+WAVEFORMS_DIR: Path = LOGS_DIR / "waveforms"
 WORKSPACE_DIR.mkdir(exist_ok=True)
+LOGS_DIR.mkdir(exist_ok=True)
+WAVEFORMS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ─── Runtime Safety Warnings ──────────────────────────────────────────────────

@@ -21,22 +21,7 @@
   },
   {
     "id": 5,
-    "name": "Synchronous FIFO",
-    "spec": "A synchronous FIFO with parameterized DATA_WIDTH (default 8) and DEPTH (default 8). Ports: wr_en, wr_data, full (write side); rd_en, rd_data, empty (read side); count output showing current fill level. Uses separate read/write pointers. No simultaneous read+write when full or empty. Active-high synchronous reset."
-  },
-  {
-    "id": 6,
-    "name": "UART Transmitter",
-    "spec": "A UART transmitter with parameterized CLK_FREQ (default 50_000_000) and BAUD_RATE (default 115_200). Supports 8N1 frame: 1 start bit, 8 data bits (LSB first), 1 stop bit. Ports: tx_start (pulse to start), tx_data[7:0], tx_serial (output line, idles high), tx_busy (high while transmitting). Active-high synchronous reset."
-  },
-  {
-    "id": 7,
     "name": "4-bit ALU",
     "spec": "A 4-bit combinational ALU with operations selected by a 3-bit op code: ADD (op=000), SUB (op=001), AND (op=010), OR (op=011), XOR (op=100), NOT A (op=101), pass-through A (op=110), pass-through B (op=111). Inputs: a[3:0], b[3:0], op[2:0]. Outputs: result[3:0], zero (high when result==0), carry_out (add/sub carry)."
-  },
-  {
-    "id": 8,
-    "name": "Priority Encoder",
-    "spec": "A parameterized priority encoder with WIDTH inputs (default 8). The output encoded[clog2(WIDTH)-1:0] encodes the index of the highest-priority (highest-index) asserted bit in data_in[WIDTH-1:0]. valid_out goes high when any input bit is asserted. Fully combinational. If no bit is asserted, encoded=0 and valid_out=0."
   }
 ]

@@ -1,0 +1,30 @@
+══════════════════════════════════════════════════════════════════════
+  RTL-AGENT SIMULATION & WAVEFORM LOG — Iteration #1
+══════════════════════════════════════════════════════════════════════
+Timestamp   : 2026-08-05T17:19:18.424236+00:00
+Session ID  : test_sess_001
+Iteration   : 1
+Phase       : RUN (Behavioral Simulation)
+Verdict     : FAIL ✗
+Return Code : 1
+Timed Out   : False
+Duration    : 312.40 ms
+DUT Path    : workspace/test_dut.sv
+Top Module  : tb_counter
+Waveform    : None (0 bytes)
+
+─── DIAGNOSTIC SUMMARY ───────────────────────────────────────────────
+FAIL: count should be 0 after SYNCHRONOUS reset, got 0
+FAIL: simulation detected asynchronous reset behaviour.
+%Fatal: tb_counter.sv:42: Verilog $fatal
+
+─── SIMULATION STDOUT ────────────────────────────────────────────────
+FAIL: count should be 0 after SYNCHRONOUS reset, got 0
+FAIL: simulation detected asynchronous reset behaviour.
+      The counter cleared mid-cycle (not on clock edge).
+      Expected: count remains unchanged until posedge clk after rst=1.
+      Got: count cleared immediately when rst asserted asynchronously.
+
+─── SIMULATION STDERR ────────────────────────────────────────────────
+%Fatal: tb_counter.sv:42: Verilog $fatal
+══════════════════════════════════════════════════════════════════════

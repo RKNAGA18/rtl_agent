@@ -1,0 +1,38 @@
+[
+  {
+    "iteration": 1,
+    "timestamp": "2026-08-05T17:21:13.838711+00:00",
+    "phase": "run",
+    "passed": false,
+    "timed_out": false,
+    "returncode": 1,
+    "elapsed_ms": 312.4,
+    "error_summary": "FAIL: count should be 0 after SYNCHRONOUS reset, got 0\nFAIL: simulation detected asynchronous reset behaviour.\n%Fatal: tb_counter.sv:42: Verilog $fatal",
+    "top_module": "tb_counter",
+    "log_file": "sim_iter1.log",
+    "vcd_file": null,
+    "vcd_size_bytes": 0,
+    "signals_captured": []
+  },
+  {
+    "iteration": 2,
+    "timestamp": "2026-08-05T17:21:17.202991+00:00",
+    "phase": "run",
+    "passed": true,
+    "timed_out": false,
+    "returncode": 0,
+    "elapsed_ms": 289.1,
+    "error_summary": "All testbench assertions passed cleanly.",
+    "top_module": "tb_counter",
+    "log_file": "sim_iter2.log",
+    "vcd_file": "trace_iter2_pass.vcd",
+    "vcd_size_bytes": 466,
+    "signals_captured": [
+      "clk",
+      "rst",
+      "en",
+      "count",
+      "overflow"
+    ]
+  }
+]

@@ -25,6 +25,8 @@ const state = {
   tbCode: null,           // current testbench code
   tbFilename: null,       // testbench .sv filename
   simIterations: [],      // [{iteration, passed, stdout, stderr, phase}]
+  simRuns: [],            // [{iteration, passed, stdout, stderr, phase, log_file_path, vcd_file_path, vcd_data, vcd_size_bytes, error_summary, elapsed_ms}]
+  activeSimRunIndex: -1,
   totalIterations: 0,
   maxTotal: 6,
   vcdData: null,
@@ -232,12 +234,14 @@ function handleEvent(ev) {
 
     case 'waveform_ready': {
       state.vcdData = ev.vcd_data;
-      const sizeKb = (ev.vcd_size_bytes / 1024).toFixed(1);
-      const badge = $('vcd-size-badge');
-      if (badge) badge.textContent = `${sizeKb} KB VCD`;
-      const dlBtn = $('download-vcd-btn');
-      if (dlBtn) dlBtn.disabled = false;
-      renderWaveform(ev.vcd_data);
+      registerSimRun({
+        iteration: ev.iteration || state.simRuns.length || 1,
+        passed: ev.passed !== undefined ? ev.passed : true,
+        vcd_data: ev.vcd_data,
+        vcd_size_bytes: ev.vcd_size_bytes,
+        vcd_file_path: ev.vcd_file_path,
+        log_file_path: ev.log_file_path,
+      });
       break;
     }
 
@@ -328,6 +332,18 @@ function handleEvent(ev) {
 
     case 'sim_build_error': {
       // Amendment 2: structural bug in --binary compile — distinct event
+      registerSimRun({
+        iteration: ev.iteration,
+        passed: false,
+        phase: 'build',
+        stdout: ev.sim_stdout,
+        stderr: ev.sim_stderr,
+        timed_out: ev.timed_out,
+        elapsed_ms: ev.elapsed_ms,
+        log_file_path: ev.log_file_path,
+        vcd_file_path: ev.vcd_file_path,
+        error_summary: ev.error_summary,
+      });
       addSimIterCard({
         iteration: ev.iteration,
         passed: false,
@@ -337,6 +353,7 @@ function handleEvent(ev) {
         timed_out: ev.timed_out,
         elapsed_ms: ev.elapsed_ms,
         label: '🔨 BUILD ERROR (structural)',
+        log_file_path: ev.log_file_path,
       });
       addFeedEvent('error', '🔨', 'SIM BUILD FAILED',
         `verilator --binary compile error (structural bug). Routing to Tier 1 correction.\n${(ev.sim_stderr || '').slice(0, 160)}`,
@@ -346,6 +363,18 @@ function handleEvent(ev) {
 
     case 'sim_iteration': {
       state.simIterations.push(ev);
+      registerSimRun({
+        iteration: ev.iteration,
+        passed: ev.passed,
+        phase: ev.phase || 'run',
+        stdout: ev.sim_stdout,
+        stderr: ev.sim_stderr,
+        timed_out: ev.timed_out,
+        elapsed_ms: ev.elapsed_ms,
+        log_file_path: ev.log_file_path,
+        vcd_file_path: ev.vcd_file_path,
+        error_summary: ev.error_summary,
+      });
       addSimIterCard({
         iteration: ev.iteration,
         passed: ev.passed,
@@ -355,6 +384,7 @@ function handleEvent(ev) {
         timed_out: ev.timed_out,
         elapsed_ms: ev.elapsed_ms,
         label: ev.passed ? '✅ SIMULATION PASS' : '❌ SIMULATION FAIL',
+        log_file_path: ev.log_file_path,
       });
       if (ev.passed) {
         setTierPill('tier2', 'pass');
@@ -550,7 +580,7 @@ function renderTestbench(code, filename) {
   }
 }
 
-function addSimIterCard({ iteration, passed, phase, stdout, stderr, timed_out, elapsed_ms, label }) {
+function addSimIterCard({ iteration, passed, phase, stdout, stderr, timed_out, elapsed_ms, label, log_file_path }) {
   if (!simIterationsEl) return;
   if (simEmptyState) simEmptyState.style.display = 'none';
 
@@ -560,13 +590,17 @@ function addSimIterCard({ iteration, passed, phase, stdout, stderr, timed_out, e
   const badge = passed ? 'PASS' : phase === 'build' ? 'BUILD ERROR' : timed_out ? 'TIMEOUT' : 'FAIL';
   const badgeClass = passed ? 'pass' : 'fail';
   const elapsedStr = elapsed_ms ? ` · ${(elapsed_ms / 1000).toFixed(2)}s` : '';
+  const cardIdx = state.simRuns.length - 1;
 
   const logText = ((stdout || '') + (stderr ? '\n' + stderr : '')).trim().slice(0, 400);
 
   card.innerHTML = `
     <div class="sim-card-header">
       <span class="sim-card-label">${escHtml(label || `Sim #${iteration}`)}</span>
-      <span class="sim-badge ${badgeClass}">${badge}</span>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <span class="sim-badge ${badgeClass}">${badge}</span>
+        <button class="btn-ghost" style="padding:1px 6px;font-size:9.5px;" onclick="openSimLogViewer(${cardIdx >= 0 ? cardIdx : 0})">📄 Log</button>
+      </div>
       <span class="sim-elapsed">${escHtml(elapsedStr)}</span>
     </div>
     <pre class="sim-log ${passed ? 'pass' : 'fail'}">${escHtml(logText || '(no output)')}</pre>
@@ -841,9 +875,12 @@ function toast(msg, type = 'info') {
   setTimeout(() => el.remove(), 4500);
 }
 
-// ─── Waveforms & Telemetry ───────────────────────────────────────────────────
+// ─── Waveforms, Logs & Telemetry ──────────────────────────────────────────────
 function clearWaveformsAndTelemetry() {
   state.vcdData = null;
+  state.simRuns = [];
+  state.activeSimRunIndex = -1;
+
   const ttftEl = $('stat-ttft');
   const tpsEl = $('stat-tps');
   const tokEl = $('stat-tokens');
@@ -857,6 +894,14 @@ function clearWaveformsAndTelemetry() {
   if (badge) badge.textContent = 'No trace';
   const dlBtn = $('download-vcd-btn');
   if (dlBtn) dlBtn.disabled = true;
+  const viewLogBtn = $('view-sim-log-btn');
+  if (viewLogBtn) viewLogBtn.disabled = true;
+
+  const iterBar = $('waveform-iter-bar');
+  if (iterBar) iterBar.style.display = 'none';
+  const diagBanner = $('sim-diag-banner');
+  if (diagBanner) diagBanner.style.display = 'none';
+
   const placeholder = $('waveform-placeholder');
   if (placeholder) {
     placeholder.textContent = 'Run a verification loop to view simulation waveforms';
@@ -867,6 +912,173 @@ function clearWaveformsAndTelemetry() {
     target.style.display = 'none';
     target.innerHTML = '';
   }
+}
+
+function registerSimRun(simData) {
+  const existingIdx = state.simRuns.findIndex(r => r.iteration === simData.iteration);
+  if (existingIdx >= 0) {
+    state.simRuns[existingIdx] = { ...state.simRuns[existingIdx], ...simData };
+  } else {
+    state.simRuns.push(simData);
+  }
+  renderWaveformIterTabs();
+  selectSimRun(existingIdx >= 0 ? existingIdx : state.simRuns.length - 1);
+}
+
+function renderWaveformIterTabs() {
+  const bar = $('waveform-iter-bar');
+  const tabs = $('waveform-iter-tabs');
+  if (!bar || !tabs) return;
+
+  bar.style.display = state.simRuns.length > 0 ? 'flex' : 'none';
+  tabs.innerHTML = '';
+
+  state.simRuns.forEach((run, idx) => {
+    const btn = document.createElement('button');
+    btn.className = `wf-iter-tab ${run.passed ? 'pass' : 'fail'} ${idx === state.activeSimRunIndex ? 'active' : ''}`;
+    btn.textContent = `Iter #${run.iteration} ${run.passed ? '✓' : '✗'}`;
+    btn.onclick = () => selectSimRun(idx);
+    tabs.appendChild(btn);
+  });
+}
+
+function selectSimRun(idx) {
+  if (idx < 0 || idx >= state.simRuns.length) return;
+  state.activeSimRunIndex = idx;
+  const run = state.simRuns[idx];
+
+  // Update tabs active state
+  const tabs = $('waveform-iter-tabs');
+  if (tabs) {
+    Array.from(tabs.children).forEach((el, i) => {
+      el.classList.toggle('active', i === idx);
+    });
+  }
+
+  // Update View Log & Download buttons
+  const viewLogBtn = $('view-sim-log-btn');
+  const dlVcdBtn = $('download-vcd-btn');
+  const sizeBadge = $('vcd-size-badge');
+
+  if (viewLogBtn) viewLogBtn.disabled = false;
+  if (dlVcdBtn) dlVcdBtn.disabled = !run.vcd_data && !run.vcd_file_path;
+
+  if (sizeBadge) {
+    if (run.vcd_size_bytes) {
+      sizeBadge.textContent = `${(run.vcd_size_bytes / 1024).toFixed(1)} KB VCD`;
+    } else if (run.vcd_data) {
+      sizeBadge.textContent = `${(run.vcd_data.length / 1024).toFixed(1)} KB`;
+    } else {
+      sizeBadge.textContent = run.passed ? 'Verified' : 'No trace';
+    }
+  }
+
+  // Failure banner
+  const diagBanner = $('sim-diag-banner');
+  const diagTitle = $('diag-title');
+  const diagSummary = $('diag-summary');
+  const diagLogPath = $('diag-log-path');
+
+  if (!run.passed) {
+    if (diagBanner) diagBanner.style.display = 'block';
+    if (diagTitle) diagTitle.textContent = `❌ Iteration #${run.iteration} Simulation Failure`;
+    if (diagLogPath) diagLogPath.textContent = run.log_file_path ? `Log: ${run.log_file_path.split(/[\\/]/).pop()}` : '';
+    if (diagSummary) diagSummary.textContent = run.error_summary || run.stderr || run.stdout || 'Simulation assertions failed.';
+  } else {
+    if (diagBanner) diagBanner.style.display = 'none';
+  }
+
+  // Waveform rendering
+  if (run.vcd_data) {
+    state.vcdData = run.vcd_data;
+    renderWaveform(run.vcd_data);
+  } else {
+    renderWaveform(null);
+  }
+}
+
+window.openSimLogViewer = async function(idx) {
+  const runIdx = (typeof idx === 'number') ? idx : (state.activeSimRunIndex >= 0 ? state.activeSimRunIndex : state.simRuns.length - 1);
+  const run = state.simRuns[runIdx];
+  const modal = $('sim-log-modal');
+  const badge = $('modal-iter-badge');
+  const meta = $('modal-log-meta');
+  const content = $('modal-log-content');
+
+  if (!modal) return;
+  modal.style.display = 'flex';
+
+  if (!run) {
+    if (content) content.textContent = 'No simulation logs captured yet.';
+    return;
+  }
+
+  if (badge) {
+    badge.textContent = `Iteration #${run.iteration} · ${run.passed ? 'PASSED ✓' : 'FAILED ✗'}`;
+    badge.style.color = run.passed ? 'var(--green)' : 'var(--red)';
+  }
+
+  let logText = '';
+  if (run.log_file_path && state.currentSession) {
+    const filename = run.log_file_path.split(/[\\/]/).pop();
+    if (meta) meta.textContent = `File: ${run.log_file_path} · Elapsed: ${run.elapsed_ms || 0}ms`;
+    try {
+      const res = await fetch(`/api/logs/${state.currentSession}/raw/${filename}`);
+      if (res.ok) {
+        logText = await res.text();
+      }
+    } catch (_) {}
+  }
+
+  if (!logText) {
+    logText = `================================================================================\n` +
+              `SIMULATION DIAGNOSTIC LOG (Iteration ${run.iteration})\n` +
+              `Status: ${run.passed ? 'PASSED' : 'FAILED'}\n` +
+              `Phase: ${run.phase || 'run'}\n` +
+              `Elapsed: ${run.elapsed_ms || 0} ms\n` +
+              `Log Path: ${run.log_file_path || 'saved to logs/'}\n` +
+              `================================================================================\n\n` +
+              `--- STDOUT ---\n${run.stdout || '(none)'}\n\n` +
+              `--- STDERR / DIAGNOSTICS ---\n${run.stderr || run.error_summary || '(none)'}`;
+  }
+
+  if (content) {
+    content.textContent = logText;
+  }
+};
+
+window.closeSimLogViewer = function() {
+  const modal = $('sim-log-modal');
+  if (modal) modal.style.display = 'none';
+};
+
+window.downloadCurrentSimLog = function() {
+  const run = state.simRuns[state.activeSimRunIndex >= 0 ? state.activeSimRunIndex : state.simRuns.length - 1];
+  if (!run) return;
+  const content = $('modal-log-content')?.textContent || ((run.stdout || '') + '\n' + (run.stderr || ''));
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `sim_iter${run.iteration}_${state.currentSession || 'log'}.log`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+function downloadVCD() {
+  const run = state.simRuns[state.activeSimRunIndex >= 0 ? state.activeSimRunIndex : state.simRuns.length - 1];
+  const vcdText = run?.vcd_data || state.vcdData;
+  if (!vcdText) {
+    toast('No VCD data available to download.', 'info');
+    return;
+  }
+  const blob = new Blob([vcdText], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${state.currentSession || 'simulation'}_iter${run?.iteration || 1}_trace.vcd`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function vcdToWaveDrom(vcdText, maxCycles = 20) {
@@ -1040,19 +1252,7 @@ function renderWaveform(vcdText) {
   }
 }
 
-function downloadVCD() {
-  if (!state.vcdData) {
-    toast('No VCD data available to download.', 'info');
-    return;
-  }
-  const blob = new Blob([state.vcdData], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${state.currentSession || 'simulation'}_trace.vcd`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 function escHtml(str) {

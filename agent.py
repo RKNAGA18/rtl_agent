@@ -514,8 +514,11 @@ async def _real_loop(
         yield _ev("thought", message=f"[Tier 2 · Func {func_iter}/{MAX_FUNCTIONAL_ITERATIONS} · Total {total_iter}/{MAX_TOTAL_ITERATIONS}] Running functional simulation...")
 
         sim = await asyncio.get_event_loop().run_in_executor(
-            None, run_simulation,
-            str(sv_path), tb_code, workdir
+            None,
+            lambda: run_simulation(
+                str(sv_path), tb_code, workdir,
+                session_id=session_id, iteration=func_iter
+            )
         )
 
         # Amendment 2: distinguish build vs run phase for event routing
@@ -529,12 +532,22 @@ async def _real_loop(
                   passed=sim.passed,
                   timed_out=sim.timed_out,
                   phase=sim.phase,
-                  elapsed_ms=sim.elapsed_ms)
+                  elapsed_ms=sim.elapsed_ms,
+                  log_file_path=sim.log_file_path,
+                  vcd_file_path=sim.vcd_file_path,
+                  error_summary=sim.error_summary)
+
+        if sim.log_file_path:
+            yield _ev("thought", message=f"[Tier 2 · Iter {func_iter}] Simulation log stored: {Path(sim.log_file_path).name}")
 
         if sim.vcd_data is not None:
             yield _ev("waveform_ready",
                       vcd_data=sim.vcd_data,
-                      vcd_size_bytes=sim.vcd_size_bytes)
+                      vcd_size_bytes=sim.vcd_size_bytes,
+                      vcd_file_path=sim.vcd_file_path,
+                      log_file_path=sim.log_file_path,
+                      iteration=func_iter,
+                      passed=sim.passed)
         elif sim.vcd_size_bytes > 0:
             yield _ev("waveform_warning",
                       message=f"VCD too large ({sim.vcd_size_bytes:,} bytes). Add #5000 $finish to testbench.")
@@ -1033,8 +1046,11 @@ async def _mock_loop(
         yield _ev("thought", message=f"[Tier 2 · Func {func_iter}/{MAX_FUNCTIONAL_ITERATIONS} · Total {total_iter}/{MAX_TOTAL_ITERATIONS}] Running mock functional simulation...")
         await asyncio.sleep(1.0)  # simulate compilation + run time
 
-        # Get scripted SimResult
-        sim = get_mock_sim_result(str(sv_path), tb_code)
+        # Get scripted SimResult with log and waveform persistence
+        sim = run_simulation(
+            str(sv_path), tb_code, str(WORKSPACE_DIR / f"{session_id}_sim"),
+            session_id=session_id, iteration=func_iter
+        )
 
         event_type = "sim_build_error" if (not sim.passed and sim.phase == "build") else "sim_iteration"
         yield _ev(event_type,
@@ -1046,12 +1062,22 @@ async def _mock_loop(
                   passed=sim.passed,
                   timed_out=sim.timed_out,
                   phase=sim.phase,
-                  elapsed_ms=sim.elapsed_ms)
+                  elapsed_ms=sim.elapsed_ms,
+                  log_file_path=sim.log_file_path,
+                  vcd_file_path=sim.vcd_file_path,
+                  error_summary=sim.error_summary)
+
+        if sim.log_file_path:
+            yield _ev("thought", message=f"[Tier 2 · Iter {func_iter}] Simulation log stored: {Path(sim.log_file_path).name}")
 
         if sim.vcd_data is not None:
             yield _ev("waveform_ready",
                       vcd_data=sim.vcd_data,
-                      vcd_size_bytes=sim.vcd_size_bytes)
+                      vcd_size_bytes=sim.vcd_size_bytes,
+                      vcd_file_path=sim.vcd_file_path,
+                      log_file_path=sim.log_file_path,
+                      iteration=func_iter,
+                      passed=sim.passed)
         elif sim.vcd_size_bytes > 0:
             yield _ev("waveform_warning",
                       message=f"VCD too large ({sim.vcd_size_bytes:,} bytes). Add #5000 $finish to testbench.")

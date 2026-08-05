@@ -11,7 +11,7 @@
 
 **An autonomous, multi-agent AI system that designs, lints, simulates, extracts digital waveforms, and self-corrects synthesizable SystemVerilog hardware designs — powered by local LLMs accelerated on AMD ROCm.**
 
-[Features](#-key-features) • [Architecture](#-multi-agent-architecture) • [AMD ROCm & vLLM](#-amd-rocm--vllm-acceleration) • [Quick Start](#-quick-start) • [Benchmark Suite](#-benchmark-results-88) • [UI & Waveforms](#-frontend-waveforms--telemetry)
+[Features](#-key-features) • [Architecture](#-multi-agent-architecture) • [AMD ROCm & vLLM](#-amd-rocm--vllm-acceleration) • [Quick Start](#-quick-start) • [Benchmark Suite](#-benchmark-results-55) • [UI & Waveforms](#-frontend-waveforms--telemetry)
 
 </div>
 
@@ -42,7 +42,7 @@ While generic AI coding assistants can generate syntactically plausible Verilog 
   - Prefix caching enabled for low-latency multi-turn agent corrections.
   - Real-time hardware telemetry streaming (TTFT, tokens/sec, throughput).
 - 🛡️ **Zero External Agent Framework Overhead**: Pure Python asynchronous state machine with Server-Sent Events (SSE) streaming — no LangChain/AutoGen bloat.
-- 🎯 **100% Benchmark Pass Rate**: Successfully generates, lints, and functionally verifies **8/8 complex hardware specifications**.
+- 🎯 **100% Benchmark Pass Rate**: Successfully generates, lints, and functionally verifies **5/5 complex hardware specifications**.
 
 ---
 
@@ -207,9 +207,9 @@ python agent_server.py
 
 ---
 
-## 📊 Benchmark Results (8/8)
+## 📊 Benchmark Results (5/5)
 
-RTL-Agent was evaluated against an 8-module comprehensive benchmark suite spanning arithmetic, sequential pipelines, storage queues, protocol transmitters, and finite state machines:
+RTL-Agent was evaluated against a 5-module comprehensive benchmark suite spanning arithmetic, sequential pipelines, multiplexing, and finite state machines:
 
 | # | Benchmark Module | Architectural Complexity | Tier 1 (Lint) | Tier 2 (Sim) | Waveform Generated | Benchmark Status |
 |---|---|---|:---:|:---:|:---:|:---:|
@@ -217,10 +217,7 @@ RTL-Agent was evaluated against an 8-module comprehensive benchmark suite spanni
 | 2 | **8-bit Shift Register** | Parallel load, bidirectional serial shift, serial out | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` | **PASSED (100%)** |
 | 3 | **2-to-1 Multiplexer** | Parameterized data bus width (32-bit default) | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` | **PASSED (100%)** |
 | 4 | **Traffic Light FSM** | Configurable phase timers, emergency override | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` | **PASSED (100%)** |
-| 5 | **Synchronous FIFO** | Parameterized depth/width, full, empty, occupancy counter | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` | **PASSED (100%)** |
-| 6 | **UART Transmitter** | 115200 baud generator, 8N1 framing, busy signaling | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` | **PASSED (100%)** |
-| 7 | **32-bit ALU** | 10 Operations (Arithmetic, Logical, Shifts, SLT), Flags | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` | **PASSED (100%)** |
-| 8 | **Priority Encoder** | 8-to-3 priority encoding, valid output flag | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` | **PASSED (100%)** |
+| 5 | **4-bit ALU** | 8 Operations (ADD, SUB, AND, OR, XOR, NOT, Pass), Flags | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` | **PASSED (100%)** |
 
 ### Run Benchmark Suite
 
@@ -265,7 +262,7 @@ rtl_agent/
 │   ├── app.js                # SSE Event dispatcher, WaveDrom & Telemetry controller
 │   └── style.css             # Glassmorphism dark theme & animations
 ├── benchmark/
-│   ├── specs.json            # 8 Target RTL specifications
+│   ├── specs.json            # 5 Target RTL specifications
 │   ├── run_benchmark.py      # Automated benchmark harness
 │   └── rocm_bench.py         # ROCm prefix-cache benchmarking utility
 └── scripts/
