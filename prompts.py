@@ -82,6 +82,9 @@ SEVEN GOLDEN RULES -- Verilator will reject code that violates these:
     Write `logic [7:0] mem [3:0] = '{0,0,0,0};`, never a bare
     `= {0,0,0,0};` -- the unquoted form is a syntax error in a declaration
     context.
+13. NO 4-STATE LOGIC: Verilator is a 2-state simulator. Do NOT use 'X' or 'Z' states in your DUT. Do not use case equality operators (=== or !==) to check for 'X'. Assume all uninitialized registers default to 0.
+14. NO LATCHES: Inside always_comb blocks, every variable must be assigned a default value or assigned in all possible branches (include 'else' and 'default' statements) to prevent inferred latches.
+15. NO DUT DELAYS: Never use time delays (e.g., #5) inside the Design Under Test (DUT). Delays are strictly forbidden in synthesizable RTL. Delays are strictly for the Testbench.
 
 Example of the exact expected format:
 
@@ -295,6 +298,20 @@ CRITICAL SIMULATION RULES FOR SYSTEMVERILOG TESTBENCHES:
 14. TIMING TIMEOUTS: Include a sufficient delay (#1000 or higher) before $finish to ensure multi-cycle operations (like serial TX/RX or FSMs) have time to complete.
 15. NON-BLOCKING ASSIGNMENTS: Inside the DUT, strictly use non-blocking assignments (<=) for sequential logic and blocking assignments (=) for combinational logic.
 16. ASSERTS: Use $display and $fatal to clearly log exactly which cycle or state failed, printing both the Expected and Got values (e.g. $display("FAIL: Expected 0x%h, Got 0x%h", expected, actual); $fatal;).
+17. SINGLE-CYCLE PULSES & OVERFLOW: When checking single-cycle pulse outputs (such as `overflow`, `done`, `valid`, `tx_done`), assert expectation for exactly ONE clock cycle when the event occurs. Do NOT expect the pulse to persist across two consecutive clock cycles. E.g. in a 4-bit counter wrapping from 15 to 0, `overflow` is asserted for exactly 1 cycle on the wrap, not held for multiple cycles.
+18. STATE & CYCLE TRACKING: Your reference model must match synchronous hardware registered cycles. In synchronous sequential logic, state changes happen on posedge clk and outputs become visible immediately after. Always sample on `@(negedge clk)` after the corresponding posedge.
+19. NO 4-STATE LOGIC: Verilator is a 2-state simulator. Do NOT use 'X' or 'Z' states in your DUT or Testbench. Do not use case equality operators (=== or !==) to check for 'X'. Assume all uninitialized registers default to 0.
+20. NO LATCHES: Inside always_comb blocks, every variable must be assigned a value in all possible branches (include 'else' and 'default' statements) to prevent inferred latches.
+21. REALISTIC LOOP LIMITS: Do not attempt to exhaustively test 32-bit or 64-bit variables. Limit testbench loops to a maximum of 256 iterations to prevent simulation timeouts.
+22. NO DUT DELAYS: Never use time delays (e.g., #5) inside the Design Under Test (DUT). Delays are strictly for the Testbench.
+23. ERROR ACCUMULATION (SOFT FAILS): Do NOT use $fatal on the first error. Instead, declare `int errors = 0;` at the top of the testbench. When an assertion fails, use $display to log the error with detailed context (expected vs got) and increment the counter (`errors++;`). At the very end of the testbench, check:
+    if (errors > 0) begin
+      $fatal(1, "SIMULATION FAILED with %0d error(s)", errors);
+    end else begin
+      $display("ALL TESTS PASSED: all checks completed cleanly");
+      $finish;
+    end
+    This allows the simulation to run through all test cases to completion and report all logical flaws across all cycles at once.
 
 MANDATORY VCD RULES (violating these will cause test failure):
 1. Every testbench module MUST contain this exact initial block:
@@ -306,9 +323,9 @@ MANDATORY VCD RULES (violating these will cause test failure):
 
 2. Every testbench MUST include a simulation timeout guard:
    initial begin
-     #50000;
+     #100000;
      $display("TIMEOUT: simulation exceeded time limit");
-     $finish;
+     $fatal(1, "FAIL: simulation timeout");
    end
    This prevents infinite loops and keeps VCD files under 100KB.
 
@@ -350,20 +367,28 @@ def build_testbench_prompt(spec: str, dut_code: str, architect_plan: str = "") -
    - Reset behavior (outputs reach known state)
    - Normal operation (primary functional path)
    - Edge/boundary case (overflow, max/min, wraparound)
-6. On ANY mismatch: $display("FAIL: <specific reason> | Expected: 0x%h, Got: 0x%h", expected, actual); $fatal;
-7. On ALL checks passing: $display("PASS: all checks passed"); $finish;
-8. MANDATORY VCD DUMP:
+6. REALISTIC LOOP BOUNDS: Limit all testbench loops to <= 256 iterations to prevent simulation timeouts.
+7. 2-STATE COMPLIANCE: Do not check for 'X' or 'Z' or use '===' against 'X'. Verilator operates in 2-state logic.
+8. SOFT FAIL ERROR ACCUMULATION: Declare `int errors = 0;` at the top. On any mismatch, log the error with $display and increment `errors++;`. Do NOT immediately call $fatal.
+9. FINAL VERDICT: At the conclusion of all test vectors:
+   if (errors > 0) begin
+     $fatal(1, "SIMULATION FAILED with %0d error(s)", errors);
+   end else begin
+     $display("PASS: all checks passed");
+     $finish;
+   end
+10. MANDATORY VCD DUMP:
    initial begin
      $dumpfile("trace.vcd");
      $dumpvars(0, tb_module);
    end
-9. MANDATORY simulation timeout guard:
+11. MANDATORY simulation timeout guard:
    initial begin
      #100000;
      $display("TIMEOUT: simulation exceeded time limit");
      $fatal(1, "FAIL: simulation timeout");
    end
-10. Module name must start with `tb_`. Use `logic` for all signals. No duplicate signal declarations.
+12. Module name must start with `tb_`. Use `logic` for all signals. No duplicate signal declarations.
 
 Output ONLY the ```verilog block.
 """
@@ -471,3 +496,65 @@ Original spec for reference:
 
 Output ONLY the corrected ```verilog testbench block. Do NOT output the DUT.
 """
+
+
+# --- Testbench Functional Correction Prompt (Behavioral failure in TESTBENCH) ─
+def build_testbench_functional_correction_prompt(
+    spec: str,
+    dut_code: str,
+    broken_tb_code: str,
+    sim_log: str,
+) -> str:
+    """
+    Build a testbench-specific correction prompt for Tier 2 functional simulation
+    failures where the testbench assertions or expectation tracking is flawed.
+    """
+    return f"""TESTBENCH BEHAVIORAL REFLECTION MODE -- The functional simulation failed.
+Check whether the TESTBENCH has flawed assertions, contradictory expectations, or clock sampling race conditions.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SIMULATION FAILURE LOG
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{sim_log.strip()}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FROZEN DUT CODE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```verilog
+{dut_code.strip()}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ CURRENT TESTBENCH (to be corrected)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```verilog
+{broken_tb_code.strip()}
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SPECIFICATION & TESTBENCH CORRECTION INSTRUCTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Specification:
+{spec.strip()}
+
+Common testbench verification pitfalls to check and correct:
+1. SINGLE-CYCLE PULSES vs 2-CYCLE EXPECTATIONS:
+   If the spec states a pulse occurs on wrap/transition (e.g. `overflow` on 15->0 wrap), ensure you only expect the pulse for exactly ONE clock cycle. Do NOT expect it at both 15 AND 0.
+2. DELTA-CYCLE SAMPLING RACES:
+   Never sample outputs on posedge clk without a delay. Always wait for `@(negedge clk)` or `#1` before checking `if (actual !== expected)`.
+3. INITIALIZATION & RESET:
+   Initialize all inputs to 0 / idle at `#0`, hold reset active for >= 3 cycles, deassert, wait 1 cycle before checking reset state and applying stimulus.
+4. 2-STATE COMPLIANCE:
+   Verilator is a 2-state simulator. Do NOT check for 'X' or 'Z' or use '===' against 'X'. Assume all uninitialized registers default to 0.
+5. REALISTIC LOOP LIMITS:
+   Limit testbench loops to a maximum of 256 iterations to prevent simulation timeouts. Do not exhaustively loop through 32-bit values.
+6. TIMEOUT / WATCHDOG:
+   Ensure timeout guard is at least `#100000` to allow multi-cycle or serial transactions to complete.
+7. NO DUPLICATE DECLARATIONS:
+   Ensure each signal (`clk`, `rst`, etc.) is declared exactly once.
+8. SOFT FAIL ERROR ACCUMULATOR:
+   Use `int errors = 0;` and accumulate errors with `$display("FAIL: ..."); errors++;` before calling `$fatal` at the very end.
+
+Output ONLY the corrected ```verilog testbench block. Do NOT modify or output the DUT.
+"""
+

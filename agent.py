@@ -42,6 +42,7 @@ from prompts import (
     build_testbench_prompt, build_verifier_testbench_prompt,
     build_functional_correction_prompt,
     build_testbench_correction_prompt,
+    build_testbench_functional_correction_prompt,
 )
 from tools.verilator_tool import run_verilator
 from tools.sv_parser import extract_systemverilog
@@ -613,15 +614,51 @@ async def _real_loop(
                 })
 
         else:
-            # run failure -- behavioral bug -- Tier 2 functional correction
-            yield _ev("thought",
-                      message="[Tier 2] Simulation FAILED functionally. "
-                               "Feeding sim log into behavioral correction prompt...")
-            messages.append({"role": "assistant", "content": f"```verilog\n{final_dut}\n```"})
-            messages.append({
-                "role": "user",
-                "content": build_functional_correction_prompt(sim_log, state["spec"], final_dut),
-            })
+            # run failure -- behavioral bug -- alternate between DUT fix and Testbench fix
+            # If func_iter is even, reflect on the testbench to fix flawed assertions/expectations
+            if func_iter % 2 == 0:
+                yield _ev("thought",
+                          message="[Tier 2] Simulation FAILED functionally. "
+                                   "Reflecting on TESTBENCH assertions & expectations (DUT frozen)...")
+                tb_messages_fix = [
+                    {"role": "system", "content": TESTBENCH_GENERATION_SYSTEM_PROMPT},
+                    {"role": "user",
+                     "content": build_testbench_functional_correction_prompt(
+                         state["spec"], final_dut, tb_code, sim_log
+                     )},
+                ]
+                tb_fix_result: list = []
+                async for ev in _llm_stream(tb_messages_fix, tb_fix_result, total_iter, tracker=tracker):
+                    yield ev
+
+                if tb_fix_result and tb_fix_result[0][0] is not None:
+                    tb_fix_resp = tb_fix_result[0][0]
+                    new_tb = extract_systemverilog(tb_fix_resp)
+                    if new_tb:
+                        tb_code = new_tb
+                        final_tb = new_tb
+                        state["tb_code"] = new_tb
+                        tb_path.write_text(new_tb, encoding="utf-8")
+                        yield _ev("testbench_generated",
+                                  total_iterations=total_iter,
+                                  code=new_tb,
+                                  filename=str(tb_path.name),
+                                  elapsed_ms=tb_fix_result[0][1],
+                                  ttft_ms=tb_fix_result[0][3],
+                                  tokens_generated=tb_fix_result[0][2],
+                                  source="tb_functional_correction")
+                continue  # re-run simulation with the corrected testbench
+
+            else:
+                # Odd iteration: feed sim log into DUT behavioral correction prompt
+                yield _ev("thought",
+                          message="[Tier 2] Simulation FAILED functionally. "
+                                   "Feeding sim log into DUT behavioral correction prompt...")
+                messages.append({"role": "assistant", "content": f"```verilog\n{final_dut}\n```"})
+                messages.append({
+                    "role": "user",
+                    "content": build_functional_correction_prompt(sim_log, state["spec"], final_dut),
+                })
 
         yield _ev("thought", message=f"[Total {total_iter}/{MAX_TOTAL_ITERATIONS}] Generating corrected DUT...")
 
