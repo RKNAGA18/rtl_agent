@@ -85,6 +85,13 @@ SEVEN GOLDEN RULES -- Verilator will reject code that violates these:
 13. NO 4-STATE LOGIC: Verilator is a 2-state simulator. Do NOT use 'X' or 'Z' states in your DUT. Do not use case equality operators (=== or !==) to check for 'X'. Assume all uninitialized registers default to 0.
 14. NO LATCHES: Inside always_comb blocks, every variable must be assigned a default value or assigned in all possible branches (include 'else' and 'default' statements) to prevent inferred latches.
 15. NO DUT DELAYS: Never use time delays (e.g., #5) inside the Design Under Test (DUT). Delays are strictly forbidden in synthesizable RTL. Delays are strictly for the Testbench.
+16. SYNCHRONOUS RESET: For synchronous reset (the default), the sensitivity list of `always_ff` MUST ONLY be `@(posedge clk)`. NEVER write `always_ff @(posedge clk or posedge rst)` as that creates an asynchronous reset and will fail synchronous reset verification. Inside the block, write: `if (rst) ... else ...`.
+17. ARITHMETIC ALU RULES:
+    - For ADD: `{carry_out, result} = a + b;`
+    - For SUB (a - b): carry_out represents borrow/underflow: `carry_out = (a < b) ? 1'b1 : 1'b0;` (or `{carry_out, result} = {1'b0, a} - {1'b0, b};`). Zero flag: `assign zero = (result == '0);`.
+    - Binary constants: NEVER use hex digits (a-f, A-F) in `4'b` binary constants. Use `4'hA` for hex, or `4'b1010` for binary.
+18. SYNCHRONOUS FIFO SIMULTANEOUS R/W:
+    When `wr_en && !full` and `rd_en && !empty` occur simultaneously on the same clock edge, data is written and read together, and the occupancy count must remain unchanged (`count <= count;`).
 
 Example of the exact expected format:
 
@@ -312,6 +319,9 @@ CRITICAL SIMULATION RULES FOR SYSTEMVERILOG TESTBENCHES:
       $finish;
     end
     This allows the simulation to run through all test cases to completion and report all logical flaws across all cycles at once.
+24. SYNCHRONOUS RESET SAMPLING: Synchronous reset takes effect on posedge clk. Drive reset for >= 2 clock cycles, then deassert at @(negedge clk). Do NOT assert reset mid-cycle and expect immediate combinational clearing.
+25. ALU SUBTRACTION CONVENTIONS: For ALU subtraction (a - b): expect `carry_out` (borrow flag) to be 1 when `a < b` (underflow), and 0 when `a >= b`. Expect `zero` to be 1 when `result == '0`.
+26. STRICT SYNTAX & CONCISE CODE: All `$display` and `$fatal` calls must have perfectly matched quotes and parentheses. Keep testbenches concise (< 120 lines) to prevent unexpected EOF truncation.
 
 MANDATORY VCD RULES (violating these will cause test failure):
 1. Every testbench module MUST contain this exact initial block:
@@ -554,6 +564,10 @@ Common testbench verification pitfalls to check and correct:
    Ensure each signal (`clk`, `rst`, etc.) is declared exactly once.
 8. SOFT FAIL ERROR ACCUMULATOR:
    Use `int errors = 0;` and accumulate errors with `$display("FAIL: ..."); errors++;` before calling `$fatal` at the very end.
+9. ALU SUBTRACTION TESTING CONVENTION:
+   For subtraction (a - b): expect `carry_out` (borrow flag) to be 1 when `a < b` (underflow), and 0 when `a >= b`. Expect `zero` to be 1 when `result == '0`.
+10. FIFO SIMULTANEOUS R/W EXPECTATION:
+   When both wr_en and rd_en are asserted on the same clock cycle, expect `count` to remain unchanged. Sample outputs at `@(negedge clk)`.
 
 Output ONLY the corrected ```verilog testbench block. Do NOT modify or output the DUT.
 """
