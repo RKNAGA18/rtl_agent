@@ -33,7 +33,7 @@ from config import (
     MOCK_MODE, DEPLOY_MODE, MODEL_NAME, VLLM_BASE_URL,
     MAX_LINT_ITERATIONS, MAX_FUNCTIONAL_ITERATIONS, MAX_TOTAL_ITERATIONS,
     MAX_ITERATIONS,
-    SERVER_HOST, SERVER_PORT, WORKSPACE_DIR, FRONTEND_DIR, LOGS_DIR,
+    SERVER_HOST, SERVER_PORT, WORKSPACE_DIR, FRONTEND_DIR,
     print_config,
 )
 
@@ -238,60 +238,6 @@ async def download_sv(session_id: str, filename: str):
         path=str(sv_path),
         media_type="text/plain",
         filename=filename,
-    )
-
-
-# ─── Waveform and Simulation Error Log Endpoints ──────────────────────────────
-@app.get("/api/logs/{session_id}")
-async def get_session_logs(session_id: str):
-    """Get structured simulation and waveform history for a session."""
-    session_log_dir = LOGS_DIR / session_id
-    history_file = session_log_dir / "simulation_history.json"
-    if not history_file.exists():
-        return {"session_id": session_id, "iterations": [], "total_simulations": 0}
-    try:
-        history = json.loads(history_file.read_text(encoding="utf-8"))
-        return {"session_id": session_id, "iterations": history, "total_simulations": len(history)}
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=f"Failed to read logs: {err}")
-
-
-@app.get("/api/logs/{session_id}/raw/{filename}")
-async def download_raw_log(session_id: str, filename: str):
-    """Download or view a specific simulation log file."""
-    log_path = LOGS_DIR / session_id / filename
-    if not log_path.exists() or not filename.endswith(".log"):
-        raise HTTPException(status_code=404, detail="Log file not found.")
-    return FileResponse(
-        path=str(log_path),
-        media_type="text/plain",
-        filename=filename,
-    )
-
-
-@app.get("/api/logs/{session_id}/vcd/{filename}")
-async def download_vcd_file(session_id: str, filename: str):
-    """Download a specific iteration .vcd waveform trace."""
-    vcd_path = LOGS_DIR / session_id / filename
-    if not vcd_path.exists() or not filename.endswith(".vcd"):
-        raise HTTPException(status_code=404, detail="Waveform file not found.")
-    return FileResponse(
-        path=str(vcd_path),
-        media_type="application/octet-stream",
-        filename=filename,
-    )
-
-
-@app.get("/api/logs/{session_id}/latest_vcd")
-async def download_latest_vcd(session_id: str):
-    """Download the latest .vcd waveform trace for this session."""
-    vcd_path = LOGS_DIR / session_id / "latest_trace.vcd"
-    if not vcd_path.exists():
-        raise HTTPException(status_code=404, detail="No waveform generated for this session.")
-    return FileResponse(
-        path=str(vcd_path),
-        media_type="application/octet-stream",
-        filename=f"{session_id}_trace.vcd",
     )
 
 

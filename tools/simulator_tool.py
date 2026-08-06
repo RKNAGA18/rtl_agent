@@ -13,20 +13,17 @@ Amendments implemented:
             so missing `timescale / `default_nettype never causes a build failure.
 """
 
-import datetime
-import json
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import Literal, Optional
 
-from config import LOGS_DIR, MOCK_MODE, SIMULATION_TIMEOUT, WAVEFORMS_DIR
+from config import MOCK_MODE, SIMULATION_TIMEOUT
 
 # Reuse the normalizer from sv_parser — do NOT duplicate logic (Amendment 4).
 from tools.sv_parser import _normalize as _normalize_sv
@@ -49,156 +46,6 @@ class SimResult:
     error_file: str = ""   # e.g. "tb_top.sv" or "{session_id}_iter3.sv"
     vcd_data: Optional[str] = field(default=None)
     vcd_size_bytes: int = field(default=0)
-    # Persistent logs and waveform tracing:
-    log_file_path: Optional[str] = field(default=None)
-    vcd_file_path: Optional[str] = field(default=None)
-    error_summary: Optional[str] = field(default=None)
-    iteration: int = 1
-
-
-# ─── Waveform and Error Log Helpers ──────────────────────────────────────────
-def _extract_vcd_signals(vcd_text: str) -> List[Dict[str, str]]:
-    """Extract list of variable names and types from VCD header."""
-    signals = []
-    if not vcd_text:
-        return signals
-    for line in vcd_text.splitlines():
-        line = line.strip()
-        if line.startswith("$var"):
-            parts = line.split()
-            if len(parts) >= 5:
-                signals.append({
-                    "type": parts[1],
-                    "width": parts[2],
-                    "id": parts[3],
-                    "name": parts[4],
-                })
-        elif line.startswith("$enddefinitions"):
-            break
-    return signals
-
-
-def _extract_error_summary(stdout: str, stderr: str, phase: str) -> str:
-    """Extract actionable failure summary from simulation stdout/stderr."""
-    combined = (stdout + "\n" + stderr).strip()
-    fail_lines = [l.strip() for l in combined.splitlines() if "FAIL:" in l or "%Error" in l or "%Fatal" in l or "TIMEOUT:" in l]
-    if fail_lines:
-        return "\n".join(fail_lines[:5])
-    if phase == "build":
-        return "Verilator C++ binary compilation failed."
-    return "Simulation finished with failure status."
-
-
-def _record_simulation_log(
-    session_id: str,
-    iteration: int,
-    phase: str,
-    passed: bool,
-    timed_out: bool,
-    returncode: int,
-    stdout: str,
-    stderr: str,
-    elapsed_ms: float,
-    vcd_path: Optional[Path],
-    vcd_data: Optional[str],
-    vcd_size_bytes: int,
-    dut_path: str,
-    top_module: Optional[str],
-) -> tuple[Optional[str], Optional[str], str]:
-    """
-    Save structured simulation log and .vcd waveform file to disk,
-    and update simulation_history.json for persistent tracing.
-    """
-    sid = session_id or "default_session"
-    session_log_dir = LOGS_DIR / sid
-    session_log_dir.mkdir(parents=True, exist_ok=True)
-
-    # 1. Save VCD waveform if present
-    saved_vcd_path: Optional[Path] = None
-    if vcd_path and vcd_path.exists() and vcd_path.stat().st_size > 0:
-        iter_vcd_name = f"trace_iter{iteration}_{'pass' if passed else 'fail'}.vcd"
-        saved_vcd_path = session_log_dir / iter_vcd_name
-        shutil.copy2(vcd_path, saved_vcd_path)
-        # Also maintain latest_trace.vcd
-        shutil.copy2(vcd_path, session_log_dir / "latest_trace.vcd")
-    elif vcd_data:
-        iter_vcd_name = f"trace_iter{iteration}_{'pass' if passed else 'fail'}.vcd"
-        saved_vcd_path = session_log_dir / iter_vcd_name
-        saved_vcd_path.write_text(vcd_data, encoding="utf-8")
-        (session_log_dir / "latest_trace.vcd").write_text(vcd_data, encoding="utf-8")
-
-    # 2. Extract error summary and signals
-    error_summary = _extract_error_summary(stdout, stderr, phase) if not passed else "All testbench assertions passed cleanly."
-    signals = _extract_vcd_signals(vcd_data) if vcd_data else []
-
-    # 3. Write human-readable simulation log
-    iter_log_path = session_log_dir / f"sim_iter{iteration}.log"
-    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-    log_content = [
-        "══════════════════════════════════════════════════════════════════════",
-        f"  RTL-AGENT SIMULATION & WAVEFORM LOG — Iteration #{iteration}",
-        "══════════════════════════════════════════════════════════════════════",
-        f"Timestamp   : {now_iso}",
-        f"Session ID  : {sid}",
-        f"Iteration   : {iteration}",
-        f"Phase       : {phase.upper()} ({'Build / Syntax' if phase == 'build' else 'Behavioral Simulation'})",
-        f"Verdict     : {'PASS ✓' if passed else 'FAIL ✗'}",
-        f"Return Code : {returncode}",
-        f"Timed Out   : {timed_out}",
-        f"Duration    : {elapsed_ms:.2f} ms",
-        f"DUT Path    : {dut_path}",
-        f"Top Module  : {top_module or 'unknown'}",
-        f"Waveform    : {saved_vcd_path.name if saved_vcd_path else 'None'} ({vcd_size_bytes:,} bytes)",
-    ]
-
-    if signals:
-        sig_names = ", ".join(s["name"] for s in signals)
-        log_content.append(f"Signals ({len(signals)}): {sig_names}")
-
-    log_content.extend([
-        "",
-        "─── DIAGNOSTIC SUMMARY ───────────────────────────────────────────────",
-        error_summary,
-        "",
-        "─── SIMULATION STDOUT ────────────────────────────────────────────────",
-        stdout.strip() or "(empty stdout)",
-        "",
-        "─── SIMULATION STDERR ────────────────────────────────────────────────",
-        stderr.strip() or "(empty stderr)",
-        "══════════════════════════════════════════════════════════════════════",
-    ])
-
-    iter_log_path.write_text("\n".join(log_content), encoding="utf-8")
-
-    # 4. Update JSON history
-    history_file = session_log_dir / "simulation_history.json"
-    history = []
-    if history_file.exists():
-        try:
-            history = json.loads(history_file.read_text(encoding="utf-8"))
-        except Exception:
-            history = []
-
-    history_entry = {
-        "iteration": iteration,
-        "timestamp": now_iso,
-        "phase": phase,
-        "passed": passed,
-        "timed_out": timed_out,
-        "returncode": returncode,
-        "elapsed_ms": elapsed_ms,
-        "error_summary": error_summary,
-        "top_module": top_module,
-        "log_file": str(iter_log_path.name),
-        "vcd_file": str(saved_vcd_path.name) if saved_vcd_path else None,
-        "vcd_size_bytes": vcd_size_bytes,
-        "signals_captured": [s["name"] for s in signals],
-    }
-    history.append(history_entry)
-    history_file.write_text(json.dumps(history, indent=2), encoding="utf-8")
-
-    return str(iter_log_path), (str(saved_vcd_path) if saved_vcd_path else None), error_summary
 
 
 # ─── Top-Module Extractor ─────────────────────────────────────────────────────
@@ -321,12 +168,9 @@ def run_simulation(
     tb_code: str,
     workdir: str,
     timeout_s: int = SIMULATION_TIMEOUT,
-    session_id: Optional[str] = None,
-    iteration: int = 1,
 ) -> SimResult:
     """
     Compile DUT + testbench with verilator --binary, then execute the result.
-    Saves simulation logs and VCD waveforms to logs/<session_id>/ for debugging.
 
     Parameters
     ----------
@@ -338,24 +182,17 @@ def run_simulation(
         Directory for obj_dir and compiled binary (must be writable).
     timeout_s : int
         Per-phase timeout in seconds (applies to both compile and run).
-    session_id : str, optional
-        Unique session identifier for organizing persistent logs.
-    iteration : int, default 1
-        Verification loop iteration index.
 
     Returns
     -------
     SimResult
-        .passed         — True iff the binary ran and stdout contains "PASS:"
-        .phase          — "build" if verilator compile failed, "run" otherwise
+        .passed      — True iff the binary ran and stdout contains "PASS:"
+        .phase       — "build" if verilator compile failed, "run" otherwise
         .stdout/.stderr — captured output
-        .timed_out      — True if either phase hit the timeout
-        .log_file_path  — Path to saved .log diagnostic file
-        .vcd_file_path  — Path to saved .vcd waveform file
-        .error_summary  — Diagnostic failure summary
+        .timed_out   — True if either phase hit the timeout
     """
     if MOCK_MODE:
-        return _mock_simulation(dut_path, tb_code, session_id=session_id, iteration=iteration)
+        return _mock_simulation(dut_path, tb_code)
 
     import time
     t0 = time.perf_counter()
@@ -373,22 +210,6 @@ def run_simulation(
     # Extract top module name
     top_module = extract_tb_top_module(tb_normalized)
     if not top_module:
-        log_p, vcd_p, err_sum = _record_simulation_log(
-            session_id=session_id,
-            iteration=iteration,
-            phase="build",
-            passed=False,
-            timed_out=False,
-            returncode=-1,
-            stdout="",
-            stderr="[RTL-AGENT ERROR] Could not detect testbench top module name.",
-            elapsed_ms=0.0,
-            vcd_path=None,
-            vcd_data=None,
-            vcd_size_bytes=0,
-            dut_path=dut_path,
-            top_module=None,
-        )
         return SimResult(
             passed=False,
             stdout="",
@@ -398,10 +219,6 @@ def run_simulation(
             phase="build",
             elapsed_ms=0.0,
             error_file="tb_top.sv",
-            log_file_path=log_p,
-            vcd_file_path=vcd_p,
-            error_summary=err_sum,
-            iteration=iteration,
         )
 
     obj_dir = workdir_path / "obj_dir"
@@ -436,22 +253,6 @@ def run_simulation(
     elapsed_build = (time.perf_counter() - t0) * 1000
 
     if timed_out_c:
-        log_p, vcd_p, err_sum = _record_simulation_log(
-            session_id=session_id,
-            iteration=iteration,
-            phase="build",
-            passed=False,
-            timed_out=True,
-            returncode=-1,
-            stdout=stdout_c,
-            stderr=f"[RTL-AGENT ERROR] verilator --binary compile timed out after {timeout_s}s.",
-            elapsed_ms=elapsed_build,
-            vcd_path=None,
-            vcd_data=None,
-            vcd_size_bytes=0,
-            dut_path=dut_path,
-            top_module=top_module,
-        )
         return SimResult(
             passed=False,
             stdout=stdout_c,
@@ -461,10 +262,6 @@ def run_simulation(
             phase="build",
             elapsed_ms=elapsed_build,
             error_file="tb_top.sv",
-            log_file_path=log_p,
-            vcd_file_path=vcd_p,
-            error_summary=err_sum,
-            iteration=iteration,
         )
 
     # String-based build pass/fail -- same rationale as verilator_tool.py.
@@ -483,22 +280,7 @@ def run_simulation(
             or "top-module" in build_combined
         )
         error_file = tb_basename if is_tb_err else ""
-        log_p, vcd_p, err_sum = _record_simulation_log(
-            session_id=session_id,
-            iteration=iteration,
-            phase="build",
-            passed=False,
-            timed_out=False,
-            returncode=rc_c,
-            stdout=stdout_c,
-            stderr=stderr_c,
-            elapsed_ms=elapsed_build,
-            vcd_path=None,
-            vcd_data=None,
-            vcd_size_bytes=0,
-            dut_path=dut_path,
-            top_module=top_module,
-        )
+        # Amendment 2: compile failure -> phase="build" -> agent uses correction prompt
         return SimResult(
             passed=False,
             stdout=stdout_c,
@@ -508,11 +290,8 @@ def run_simulation(
             phase="build",
             elapsed_ms=elapsed_build,
             error_file=error_file,
-            log_file_path=log_p,
-            vcd_file_path=vcd_p,
-            error_summary=err_sum,
-            iteration=iteration,
         )
+
 
     # ── Phase 2: Run ───────────────────────────────────────────────────────────
     # On Windows/WSL the binary is inside WSL — invoke via wsl
@@ -526,6 +305,24 @@ def run_simulation(
     )
 
     elapsed_total = (time.perf_counter() - t0) * 1000
+
+    if timed_out_r:
+        return SimResult(
+            passed=False,
+            stdout="FAIL: simulation timeout — binary exceeded wall-clock limit",
+            stderr=stderr_r,
+            returncode=-1,
+            timed_out=True,
+            phase="run",
+            elapsed_ms=elapsed_total,
+            vcd_data=None,
+            vcd_size_bytes=0,
+        )
+
+    # Primary pass/fail signal: testbench-emitted strings, not just exit code.
+    # $fatal sets nonzero exit but we also want the human-readable message surfaced.
+    combined = stdout_r + stderr_r
+    passed = "PASS:" in combined and "FAIL:" not in combined
 
     # VCD capture
     VCD_MAX_BYTES = 512 * 1024  # 512 KB hard cap
@@ -548,62 +345,6 @@ def run_simulation(
                 f"Check testbench for missing $finish timeout."
             )
 
-    if timed_out_r:
-        log_p, vcd_p, err_sum = _record_simulation_log(
-            session_id=session_id,
-            iteration=iteration,
-            phase="run",
-            passed=False,
-            timed_out=True,
-            returncode=-1,
-            stdout="FAIL: simulation timeout — binary exceeded wall-clock limit",
-            stderr=stderr_r,
-            elapsed_ms=elapsed_total,
-            vcd_path=vcd_path if vcd_path.exists() else None,
-            vcd_data=vcd_data,
-            vcd_size_bytes=vcd_size_bytes,
-            dut_path=dut_path,
-            top_module=top_module,
-        )
-        return SimResult(
-            passed=False,
-            stdout="FAIL: simulation timeout — binary exceeded wall-clock limit",
-            stderr=stderr_r,
-            returncode=-1,
-            timed_out=True,
-            phase="run",
-            elapsed_ms=elapsed_total,
-            vcd_data=None,
-            vcd_size_bytes=0,
-            log_file_path=log_p,
-            vcd_file_path=vcd_p,
-            error_summary=err_sum,
-            iteration=iteration,
-        )
-
-    # Primary pass/fail signal: testbench-emitted strings, not just exit code.
-    # $fatal sets nonzero exit but we also want the human-readable message surfaced.
-    combined = stdout_r + stderr_r
-    passed = "PASS:" in combined and "FAIL:" not in combined
-
-    # Record persistent simulation and waveform logs
-    log_p, vcd_p, err_sum = _record_simulation_log(
-        session_id=session_id,
-        iteration=iteration,
-        phase="run",
-        passed=passed,
-        timed_out=False,
-        returncode=rc_r,
-        stdout=stdout_r,
-        stderr=stderr_r,
-        elapsed_ms=elapsed_total,
-        vcd_path=vcd_path if vcd_path.exists() else None,
-        vcd_data=vcd_data,
-        vcd_size_bytes=vcd_size_bytes,
-        dut_path=dut_path,
-        top_module=top_module,
-    )
-
     return SimResult(
         passed=passed,
         stdout=stdout_r,
@@ -614,48 +355,15 @@ def run_simulation(
         elapsed_ms=elapsed_total,
         vcd_data=vcd_data,
         vcd_size_bytes=vcd_size_bytes,
-        log_file_path=log_p,
-        vcd_file_path=vcd_p,
-        error_summary=err_sum,
-        iteration=iteration,
     )
 
 
 # ─── Mock mode shim ─────────────────────────────────────────────────────────
-def _mock_simulation(
-    dut_path: str,
-    tb_code: str,
-    session_id: Optional[str] = None,
-    iteration: int = 1,
-) -> SimResult:
+def _mock_simulation(dut_path: str, tb_code: str) -> SimResult:
     """
     Short-circuit to canned SimResult objects when MOCK_MODE=true.
     Reads the mock scenario index from a module-level counter so
     successive calls in one mock session return the scripted sequence.
-    Also records mock logs and waveform files for testing and tracing.
     """
     from tools.mock_responses import get_mock_sim_result
-    res = get_mock_sim_result(dut_path, tb_code)
-
-    top_mod = extract_tb_top_module(tb_code) or "tb_counter"
-    log_p, vcd_p, err_sum = _record_simulation_log(
-        session_id=session_id,
-        iteration=iteration,
-        phase=res.phase,
-        passed=res.passed,
-        timed_out=res.timed_out,
-        returncode=res.returncode,
-        stdout=res.stdout,
-        stderr=res.stderr,
-        elapsed_ms=res.elapsed_ms,
-        vcd_path=None,
-        vcd_data=res.vcd_data,
-        vcd_size_bytes=res.vcd_size_bytes,
-        dut_path=dut_path,
-        top_module=top_mod,
-    )
-    res.log_file_path = log_p
-    res.vcd_file_path = vcd_p
-    res.error_summary = err_sum
-    res.iteration = iteration
-    return res
+    return get_mock_sim_result(dut_path, tb_code)

@@ -514,11 +514,8 @@ async def _real_loop(
         yield _ev("thought", message=f"[Tier 2 · Func {func_iter}/{MAX_FUNCTIONAL_ITERATIONS} · Total {total_iter}/{MAX_TOTAL_ITERATIONS}] Running functional simulation...")
 
         sim = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: run_simulation(
-                str(sv_path), tb_code, workdir,
-                session_id=session_id, iteration=func_iter
-            )
+            None, run_simulation,
+            str(sv_path), tb_code, workdir
         )
 
         # Amendment 2: distinguish build vs run phase for event routing
@@ -532,22 +529,12 @@ async def _real_loop(
                   passed=sim.passed,
                   timed_out=sim.timed_out,
                   phase=sim.phase,
-                  elapsed_ms=sim.elapsed_ms,
-                  log_file_path=sim.log_file_path,
-                  vcd_file_path=sim.vcd_file_path,
-                  error_summary=sim.error_summary)
-
-        if sim.log_file_path:
-            yield _ev("thought", message=f"[Tier 2 · Iter {func_iter}] Simulation log stored: {Path(sim.log_file_path).name}")
+                  elapsed_ms=sim.elapsed_ms)
 
         if sim.vcd_data is not None:
             yield _ev("waveform_ready",
                       vcd_data=sim.vcd_data,
-                      vcd_size_bytes=sim.vcd_size_bytes,
-                      vcd_file_path=sim.vcd_file_path,
-                      log_file_path=sim.log_file_path,
-                      iteration=func_iter,
-                      passed=sim.passed)
+                      vcd_size_bytes=sim.vcd_size_bytes)
         elif sim.vcd_size_bytes > 0:
             yield _ev("waveform_warning",
                       message=f"VCD too large ({sim.vcd_size_bytes:,} bytes). Add #5000 $finish to testbench.")
@@ -600,11 +587,6 @@ async def _real_loop(
                 if tb_fix_result and tb_fix_result[0][0] is not None:
                     tb_fix_resp = tb_fix_result[0][0]
                     new_tb = extract_systemverilog(tb_fix_resp)
-                    if not new_tb and tb_fix_resp and "module " in tb_fix_resp:
-                        resp_clean = tb_fix_resp.strip()
-                        if "endmodule" not in resp_clean:
-                            resp_clean += "\nendmodule\n"
-                        new_tb = extract_systemverilog(f"```verilog\n{resp_clean}\n```")
                     if new_tb:
                         tb_code = new_tb
                         final_tb = new_tb
@@ -618,8 +600,6 @@ async def _real_loop(
                                   ttft_ms=tb_fix_result[0][3],
                                   tokens_generated=tb_fix_result[0][2],
                                   source="tb_correction")
-                    else:
-                        yield _ev("thought", message="[Tier 2] Could not extract valid SV testbench from correction response.")
                 continue  # retry simulation with fixed testbench
 
             else:
@@ -654,11 +634,6 @@ async def _real_loop(
                 if tb_fix_result and tb_fix_result[0][0] is not None:
                     tb_fix_resp = tb_fix_result[0][0]
                     new_tb = extract_systemverilog(tb_fix_resp)
-                    if not new_tb and tb_fix_resp and "module " in tb_fix_resp:
-                        resp_clean = tb_fix_resp.strip()
-                        if "endmodule" not in resp_clean:
-                            resp_clean += "\nendmodule\n"
-                        new_tb = extract_systemverilog(f"```verilog\n{resp_clean}\n```")
                     if new_tb:
                         tb_code = new_tb
                         final_tb = new_tb
@@ -672,8 +647,6 @@ async def _real_loop(
                                   ttft_ms=tb_fix_result[0][3],
                                   tokens_generated=tb_fix_result[0][2],
                                   source="tb_functional_correction")
-                    else:
-                        yield _ev("thought", message="[Tier 2] Could not extract valid SV testbench from functional correction response.")
                 continue  # re-run simulation with the corrected testbench
 
             else:
@@ -1060,11 +1033,8 @@ async def _mock_loop(
         yield _ev("thought", message=f"[Tier 2 · Func {func_iter}/{MAX_FUNCTIONAL_ITERATIONS} · Total {total_iter}/{MAX_TOTAL_ITERATIONS}] Running mock functional simulation...")
         await asyncio.sleep(1.0)  # simulate compilation + run time
 
-        # Get scripted SimResult with log and waveform persistence
-        sim = run_simulation(
-            str(sv_path), tb_code, str(WORKSPACE_DIR / f"{session_id}_sim"),
-            session_id=session_id, iteration=func_iter
-        )
+        # Get scripted SimResult
+        sim = get_mock_sim_result(str(sv_path), tb_code)
 
         event_type = "sim_build_error" if (not sim.passed and sim.phase == "build") else "sim_iteration"
         yield _ev(event_type,
@@ -1076,22 +1046,12 @@ async def _mock_loop(
                   passed=sim.passed,
                   timed_out=sim.timed_out,
                   phase=sim.phase,
-                  elapsed_ms=sim.elapsed_ms,
-                  log_file_path=sim.log_file_path,
-                  vcd_file_path=sim.vcd_file_path,
-                  error_summary=sim.error_summary)
-
-        if sim.log_file_path:
-            yield _ev("thought", message=f"[Tier 2 · Iter {func_iter}] Simulation log stored: {Path(sim.log_file_path).name}")
+                  elapsed_ms=sim.elapsed_ms)
 
         if sim.vcd_data is not None:
             yield _ev("waveform_ready",
                       vcd_data=sim.vcd_data,
-                      vcd_size_bytes=sim.vcd_size_bytes,
-                      vcd_file_path=sim.vcd_file_path,
-                      log_file_path=sim.log_file_path,
-                      iteration=func_iter,
-                      passed=sim.passed)
+                      vcd_size_bytes=sim.vcd_size_bytes)
         elif sim.vcd_size_bytes > 0:
             yield _ev("waveform_warning",
                       message=f"VCD too large ({sim.vcd_size_bytes:,} bytes). Add #5000 $finish to testbench.")
