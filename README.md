@@ -5,7 +5,7 @@
 **Project:** Autonomous RTL Generation, Static Linting, Functional Simulation, and Digital Waveform Analysis 
 
 - [📄 Read the Full Project Specification](docs/Project_Specification.pdf)
-- [📊 View the Pitch Deck](docs/Pitch_Deck.pdf)
+- [📊 View the Pitch Deck](https://docs.google.com/presentation/d/1qKeKEMhVvQ864-Eqo09KVETKo4MwHmZ4/edit?usp=sharing&ouid=106373629719249870202&rtpof=true&sd=true))
 - [🎥 Watch the Demo Video](https://www.youtube.com/watch?v=AHY-smP2EEU)
 
 <div align="center">
