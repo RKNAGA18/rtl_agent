@@ -173,8 +173,7 @@ The user interface is built strictly with **Vanilla HTML5, CSS3, and modern ECMA
 
 ```text
 rtl_agent/
-├── .gitignore
-│   ├── Pitch_Deck.pdf          
+├── .gitignore         
 │   └── Project_Specification.pdf 
 ├── README.md
 ├── requirements.txt            # Python dependencies (FastAPI, Uvicorn, OpenAI, etc.)
