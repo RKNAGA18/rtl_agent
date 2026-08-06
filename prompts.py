@@ -94,6 +94,18 @@ SEVEN GOLDEN RULES -- Verilator will reject code that violates these:
     When `wr_en && !full` and `rd_en && !empty` occur simultaneously on the same clock edge, data is written and read together, and the occupancy count must remain unchanged (`count <= count;`).
 19. COMPLETE RESET CLEARING FOR ALL REGISTERS:
     In sequential logic (shift registers, counters, FIFOs, FSMs, pipelines), when reset is asserted, you MUST reset EVERY internal register and output register (e.g. `shift_reg <= '0; data_out <= '0; valid <= 1'b0; count <= '0;`). Never leave output registers or internal state unreset.
+20. MULTIPLEXERS & COMBINATIONAL CASE COMPLETENESS:
+    - For an N-to-1 multiplexer with M-bit select (e.g. 4-to-1 mux with sel[1:0] or 2-to-1 mux with sel), map each binary select index explicitly:
+        always_comb begin
+            case (sel)
+                2'b00: y = in0;
+                2'b01: y = in1;
+                2'b10: y = in2;
+                2'b11: y = in3;
+                default: y = in0; // Or y = '0;
+            endcase
+        end
+    - For parameterized or continuous multiplexers: `assign y = sel ? b : a;` or explicit ternary trees.
 
 Example of the exact expected format:
 
@@ -327,6 +339,11 @@ CRITICAL SIMULATION RULES FOR SYSTEMVERILOG TESTBENCHES:
 27. NO TASKS OR FUNCTIONS: DO NOT declare any `task ... endtask` or `function ... endfunction` in the testbench. All test stimulus, resets, `@(negedge clk)` waits, and assertion checks MUST be written linearly inside a single main `initial begin ... end` block. This completely eliminates nested task and duplicate declaration errors.
 28. VARIABLE DECLARATIONS: Declare all loop indices (e.g. `int i;`, `int cycle;`) and test variables at the top of the testbench module. Never use undeclared variables.
 29. ARRAY LITERAL PATTERNS: Array initializers MUST use the tick syntax `'{...}` (e.g., `logic [7:0] expected_data [0:3] = '{8'h01, 8'h02, 8'h03, 8'h04};`).
+30. MULTIPLEXER TEST STIMULUS:
+    When testing multiplexers (2-to-1, 4-to-1, etc.):
+    - Assign distinct, non-zero values to all data inputs (e.g. `in0 = 8'h11; in1 = 8'h22; in2 = 8'h33; in3 = 8'h44;`).
+    - Verify each valid binary select `sel = 0, 1, 2, ...` outputs its respective input channel.
+    - Do NOT assert contradictory or arbitrary "default case" expected values that contradict standard binary port indexing.
 
 MANDATORY VCD RULES (violating these will cause test failure):
 1. Every testbench module MUST contain this exact initial block:
@@ -575,6 +592,8 @@ Common testbench verification pitfalls to check and correct:
    For subtraction (a - b): expect `carry_out` (borrow flag) to be 1 when `a < b` (underflow), and 0 when `a >= b`. Expect `zero` to be 1 when `result == '0`.
 10. FIFO SIMULTANEOUS R/W EXPECTATION:
    When both wr_en and rd_en are asserted on the same clock cycle, expect `count` to remain unchanged. Sample outputs at `@(negedge clk)`.
+11. MULTIPLEXER STIMULUS & EXPECTATION:
+   Assign distinct, non-zero values to all input ports. Test each binary select value `sel = 0, 1, 2, ...` against its corresponding input channel. Do NOT assert arbitrary "default case" values that contradict standard binary port selection.
 
 Output ONLY the corrected ```verilog testbench block. Do NOT modify or output the DUT.
 """

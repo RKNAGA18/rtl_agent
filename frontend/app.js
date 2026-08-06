@@ -87,17 +87,31 @@ async function loadConfig() {
     const res = await fetch('/api/config');
     state.config = await res.json();
     state.maxTotal = state.config.max_total_iterations || 6;
+    
+    const model = state.config.model || 'Qwen2.5-Coder-7B';
+    const shortModel = model.split('/').pop().replace('-Instruct', '');
+    const dm = state.config.deploy_mode || (state.config.mock_mode ? 'mock' : 'vllm');
+    const isMock = (dm === 'mock' || state.config.mock_mode);
+
+    const modelBadgeText = $('model-badge-text');
+    if (modelBadgeText) {
+      modelBadgeText.textContent = `${shortModel}`;
+    }
+
     if (modeBadge) {
-      const dm = state.config.deploy_mode || (state.config.mock_mode ? 'mock' : 'vllm');
-      const labels = {
-        'mock':         'MOCK MODE',
-        'deepseek':     'DeepSeek · deepseek-coder',
-        'amd-api':      'AMD API · Qwen2.5-Coder-7B ⚠',
-        'amd-deepseek': 'AMD API · DeepSeek-V4 ⚠',
-        'vllm':         'LIVE · AMD ROCm vLLM',
-      };
-      modeBadge.textContent = labels[dm] || ('LIVE · ' + dm);
-      modeBadge.className   = 'mode-badge ' + (dm === 'mock' ? 'mock' : 'real');
+      if (isMock) {
+        modeBadge.textContent = `MOCK MODE · ${shortModel}`;
+        modeBadge.className   = 'mode-badge mock';
+      } else if (dm === 'deepseek') {
+        modeBadge.textContent = `LIVE · DeepSeek (${shortModel})`;
+        modeBadge.className   = 'mode-badge real';
+      } else if (dm === 'vllm') {
+        modeBadge.textContent = `LIVE · AMD ROCm (${shortModel})`;
+        modeBadge.className   = 'mode-badge real';
+      } else {
+        modeBadge.textContent = `LIVE · ${shortModel}`;
+        modeBadge.className   = 'mode-badge real';
+      }
     }
   } catch (_) {}
 }
