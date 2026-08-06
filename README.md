@@ -1,196 +1,275 @@
 # RTL-Agent: Autonomous Multi-Agent Hardware Verification on AMD ROCm
 
+**Participant:** R. Naga Arjun | Vellore Institute of Technology, Chennai  
+**Track:** Track 2: Agentic AI  
+**Project:** Autonomous RTL Generation, Static Linting, Functional Simulation, and Digital Waveform Analysis  
+
 <div align="center">
 
-[![AMD ROCm](https://img.shields.io/badge/AMD_ROCm-6.1+-ED1C24?style=for-the-badge&logo=amd&logoColor=white)](https://rocm.docs.amd.com/)
-[![vLLM Accelerated](https://img.shields.io/badge/vLLM-Prefix_Caching-00ADD8?style=for-the-badge&logo=fastapi&logoColor=white)](https://docs.vllm.ai/)
-[![Model](https://img.shields.io/badge/LLM-DeepSeek--V4--Flash-7C3AED?style=for-the-badge&logo=huggingface&logoColor=white)](https://huggingface.co/)
-[![Verilator](https://img.shields.io/badge/Simulator-Verilator_5.0+-22D3EE?style=for-the-badge&logo=cplusplus&logoColor=white)](https://www.veripool.org/verilator/)
-[![Waveforms](https://img.shields.io/badge/Waveforms-VCD_➔_WaveDrom-10B981?style=for-the-badge&logo=svg&logoColor=white)](https://wavedrom.com/)
-[![License](https://img.shields.io/badge/License-Apache_2.0-F59E0B?style=for-the-badge)](LICENSE)
-
-**An autonomous, multi-agent AI system that designs, lints, simulates, extracts digital waveforms, and self-corrects synthesizable SystemVerilog hardware designs — powered by local LLMs accelerated on AMD ROCm.**
-
-[Features](#-key-features) • [Architecture](#-multi-agent-architecture) • [AMD ROCm Acceleration](#-amd-rocm--vllm-acceleration) • [Quick Start](#-quick-start) • [Benchmarks](#-benchmark-results)
+[![AMD ROCm](https://img.shields.io/badge/AMD_ROCm-vLLM_Engine-ED1C24?style=for-the-badge&logo=amd&logoColor=white)](https://rocm.docs.amd.com/)
+[![Model](https://img.shields.io/badge/LLM-Qwen2.5--Coder--7B--Instruct-7C3AED?style=for-the-badge&logo=huggingface&logoColor=white)](https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct)
+[![EDA Engine](https://img.shields.io/badge/Simulator-Verilator_5.0+-22D3EE?style=for-the-badge&logo=cplusplus&logoColor=white)](https://www.veripool.org/verilator/)
+[![Backend](https://img.shields.io/badge/Backend-FastAPI_AsyncIO-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Frontend](https://img.shields.io/badge/UI-Vanilla_HTML5_CSS3_JS-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black)](frontend/)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge)](LICENSE)
 
 </div>
 
 ---
 
-## ⚡ The Silicon Verification Bottleneck
+## Executive Summary
 
-In modern VLSI and ASIC engineering, **functional verification is the single largest bottleneck**, consuming **over 70% of total engineering cycles and design budget**. A single undetected functional bug reaching tape-out can result in physical silicon respins costing **$50M–$100M+** and a 6-to-9 month market delay.
+Functional verification accounts for over 70% of engineering effort and project budgets in modern VLSI and ASIC development. A single undetected functional discrepancy prior to tape-out can lead to physical silicon respins costing upwards of $50M to $100M alongside critical market window delays.
 
-While generic AI coding assistants can generate syntactically plausible Verilog snippets, they fail in hardware engineering because they lack:
-1. **Closed-loop EDA tooling feedback** (syntax linting & structural elaboration).
-2. **Behavioral verification** (generating self-checking testbenches and executing functional simulation).
-3. **Automated diagnosis & self-correction** (differentiating syntax errors from functional protocol mismatches).
+Standard Large Language Models generate plausible SystemVerilog syntax but routinely fail in production hardware design due to three fundamental deficiencies:
+1. Absence of closed-loop Electronic Design Automation (EDA) compiler feedback.
+2. Inability to synthesize rigorous, cycle-accurate, self-checking verification testbenches.
+3. Lack of targeted dual-perspective reflection to isolate structural compilation errors from temporal protocol bugs.
 
-**RTL-Agent solves this by establishing a fully autonomous, closed-loop 3-Agent verification pipeline with hardware-in-the-loop EDA simulation on AMD ROCm.**
-
----
-
-## 🌟 Key Features
-
-*   🤖 **3-Agent Specialized Pipeline**: Linear state machine featuring **Architect** (interface & verification strategy), **Coder** (RTL synthesis & lint self-healing), and **Verifier** (testbench generation & functional simulation).
-*   🔬 **Two-Tier Verification Loop**:
-    *   **Tier 1 (Linting)**: Subprocess execution of `verilator --lint-only -Wall --timing` to eliminate syntax, width mismatch, and elaboration errors.
-    *   **Tier 2 (Functional Simulation)**: Native binary compilation (`verilator --binary`) executing self-checking testbenches with "Soft Fail" error accumulators.
-*   📈 **Real-Time Digital Waveform Viewer**: Testbenches automatically generate VCD (Value Change Dump) traces, parsed on-the-fly and rendered as interactive digital timing diagrams via **WaveDrom**.
-*   🚀 **AMD ROCm & High-Throughput Inference**:
-    *   Local GPU acceleration with ROCm 6.1 leveraging Triton attention on Radeon.
-    *   Real-time hardware telemetry streaming (TTFT, tokens/sec, throughput).
-*   🛡️ **Zero Framework Overhead**: Pure Python asynchronous state machine with Server-Sent Events (SSE) streaming — no LangChain/AutoGen bloat.
+**RTL-Agent** addresses this engineering challenge through an autonomous 3-Agent closed-loop pipeline running on local AMD ROCm hardware via vLLM. Hardware engineers provide high-level natural language specifications; RTL-Agent autonomously produces synthesizable, lint-clean SystemVerilog RTL, cycle-accurate self-checking testbenches, and interactive digital timing diagrams with zero cloud dependencies.
 
 ---
 
-## 🏛️ Multi-Agent Architecture
+## System Architecture
+
+RTL-Agent executes a deterministic, multi-agent linear state machine combined with a two-tier hardware-in-the-loop verification loop.
 
 ```mermaid
 graph TD
-    %% Styling
-    classDef user fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
-    classDef agent fill:#2b6cb0,stroke:#63b3ed,stroke-width:2px,color:#fff
-    classDef engine fill:#c53030,stroke:#fc8181,stroke-width:2px,color:#fff
-    classDef backend fill:#276749,stroke:#68d391,stroke-width:2px,color:#fff
-    classDef pass fill:#38a169,stroke:#9ae6b4,stroke-width:2px,color:#fff
-
-    %% Nodes
-    User([User Natural Language RTL Spec]) ::: user
-    AMD[(AMD Radeon ROCm API<br>DeepSeek-V4-Flash)] ::: backend
+    User[Natural Language Specification] --> Arch[Agent 1: Architect]
+    Arch --> Coder[Agent 2: Coder]
+    Coder --> Tier1{Tier 1: Static Lint}
     
-    subgraph RTL-Agent Pipeline
-        Arch[Architect Agent<br>Micro-Arch & Test Plan] ::: agent
-        Coder[Coder Agent<br>SystemVerilog DUT] ::: agent
-        Verif[Verifier Agent<br>Soft-Fail Testbench] ::: agent
-    end
-
-    subgraph Verilator Verification Engine
-        Tier1{Tier 1: Linting<br>Syntax Check} ::: engine
-        Tier2{Tier 2: Simulation<br>C++ VCD Trace} ::: engine
-        Reflect[Dual-Perspective<br>Reflection Engine] ::: engine
-    end
+    Tier1 -->|Compiler Error| Coder
+    Tier1 -->|Lint Clean| Verif[Agent 3: Verifier]
     
-    Success(((Verified SV &<br>WaveDrom UI))) ::: pass
-
-    %% Connections
-    User --> Arch
-    Arch --> Coder
-    Coder --> Tier1
+    Verif --> Tier2{Tier 2: Functional Sim}
+    Tier2 -->|All Assertions Passed| Success[Verified Hardware Package]
+    Tier2 -->|Assertion / Logic Failure| Reflect[Reflection Engine]
     
-    Tier1 -->|FAIL: Diagnostics| Coder
-    Tier1 -->|PASS| Verif
-    
-    Verif --> Tier2
-    Tier2 -->|FAIL: Behavioral Diagnostics| Reflect
-    
-    Reflect -.->|Fix DUT| Coder
+    Reflect -.->|Fix RTL| Coder
     Reflect -.->|Fix Testbench| Verif
-    
-    Tier2 -->|PASS| Success
 
-    %% AMD Backend Links
-    Arch -.->|API Calls| AMD
-    Coder -.->|API Calls| AMD
-    Verif -.->|API Calls| AMD
+    ROCm[(AMD ROCm vLLM Server)] -.-> Arch
+    ROCm -.-> Coder
+    ROCm -.-> Verif
 ```
 
 ### Agent Roles and Responsibilities
 
-| Agent | Core Objective | Verification Tooling | Outputs |
-| --- | --- | --- | --- |
-| **Architect** | High-level system engineering, port definition, reset strategy, and test planning. | *None (Planning Phase)* | `architect_plan` (markdown specification & strategy) |
-| **Coder** | Synthesizable RTL design & static quality assurance. | `verilator --lint-only -Wall` | Clean SystemVerilog DUT (`rtl_code`) |
-| **Verifier** | Dynamic verification, self-checking stimulus, waveform dumping. | `verilator --binary` + VCD Parser | Self-checking Testbench (`tb_code`), VCD traces |
+| Agent | Responsibility | Injected Context & Constraints | Output Artifact |
+| :--- | :--- | :--- | :--- |
+| **Agent 1: Architect** | Parses natural language specifications; extracts clock domains, reset polarity, parameter definitions, and state encodings; outlines exhaustive verification test cases. | Industry standard SystemVerilog coding conventions, synchronous reset prioritization, protocol timing specifications. | Formal Micro-Architecture Plan and Verification Strategy document. |
+| **Agent 2: Coder** | Synthesizes synthesizable SystemVerilog Register-Transfer Level (RTL) code; executes the Tier 1 linting loop. | Strict non-blocking assignment rules (`<=` for sequential, `=` for combinational), complete case branches, port match criteria. | Synthesizable SystemVerilog module (`{session_id}_iter{N}.sv`). |
+| **Agent 3: Verifier** | Generates self-checking SystemVerilog testbenches with isolated clock generation, assertions, soft-fail counters, and VCD dumps; manages Tier 2 simulation. | Verilator testbench syntax, isolated clock generators, non-fatal assertion monitoring, timeout watchdogs, `$dumpvars` tracing. | Self-checking testbench (`tb_top.sv`) and Value Change Dump (`dump.vcd`). |
 
 ---
 
-## 🚀 AMD ROCm Acceleration
+## Two-Tier EDA Verification Engine
 
-RTL-Agent is designed specifically for **AMD hardware execution**, fully utilizing the ROCm stack for high-throughput EDA workflows.
+RTL-Agent interfaces directly with the native C++ Verilator compiler via robust asynchronous subprocesses.
 
-### Performance Optimizations
-
-1. **Radeon API Backend**: Utilizes the AMD developer API for DeepSeek-V4-Flash inference.
-2. **KV-Cache Prefix Caching**: Because the system prompt, architect plan, and previous iteration attempts share identical prefixes, KV-cache reuse heavily reduces Time-To-First-Token (TTFT) across multi-turn correction loops.
-3. **Real-Time Hardware Telemetry Stream**: SSE streams live TTFT, tokens-per-second, and total generated tokens directly to the dashboard alongside the verification results.
-
----
-
-## 💻 Quick Start
-
-### Prerequisites
-
-* Ubuntu/Debian-based Linux environment (or WSL2)
-* Python 3.10+
-* `verilator` (v5.0+ recommended)
-* Node.js (for Localtunnel UI exposure)
-
-### Installation & Execution
-
+### Tier 1: Static Syntax and Elaboration Linting
+Catches syntax bugs, undeclared nets, bit-width truncations, and combinatorial loops before simulation.
 ```bash
-# 1. Clone the repository
-git clone https://github.com/your-username/rtl_agent.git
-cd rtl_agent
+verilator --lint-only -Wall -Wno-style -Wno-fatal --timing <path_to_dut.sv>
+```
+* On failure, standard error logs are extracted and injected into the Coder Agent's conversation history with structured line pointers.
 
-# 2. Install dependencies & Verilator
-apt-get update && apt-get install -y verilator build-essential nodejs npm
-pip install -r requirements.txt
+### Tier 2: Functional Simulation and Waveform Generation
+Compiles the Device Under Test (DUT) and the generated testbench into a native multithreaded C++ executable.
+```bash
+# Compilation Phase
+verilator --binary --trace --timing -Wall -Wno-style -Wno-fatal --sv \
+          --top-module <top_module_name> \
+          -o <sim_binary_path> \
+          --Mdir <obj_dir_path> \
+          <dut_path> <tb_path>
 
-# 3. Export AMD API Credentials
-export VLLM_BASE_URL="https://developer.amd.com.cn/radeon/api/v1"
-export MODEL_NAME="DeepSeek-V4-Flash" 
-export VLLM_API_KEY="your-api-key-here"
-export DEPLOY_MODE="amd-api"
+# Execution Phase
+./sim_out
+```
+* **Soft-Fail Accumulation**: The testbench executes all test vectors, accumulating assertion mismatches in an error counter rather than terminating on the first error, providing comprehensive diagnostic logs to the reflection loop.
+* **Trace Extraction**: Value Change Dump (VCD) files are captured, filtered to extract top-level I/O signals, and converted into structured JSON for client-side timing diagram rendering.
 
-# 4. Launch the Agent Server in the background
-python agent_server.py > agent_server.log 2>&1 &
-sleep 4
+---
 
-# 5. Expose the UI via Localtunnel
-npx --yes localtunnel --port 7860
+## AMD ROCm and vLLM Hardware Optimization
+
+RTL-Agent is configured to maximize throughput on AMD ROCm compute platforms (including AMD Radeon and AMD Instinct architectures).
+
+```mermaid
+graph TD
+    subgraph ROCm Platform [AMD ROCm Platform: Radeon / Instinct MI300X]
+        subgraph vLLM [vLLM High-Throughput Inference Engine]
+            direction TB
+            A["PagedAttention & KV-Cache Management (GPU Memory: 0.90)"]
+            B["Automatic Prefix Caching (Shared System Prompt KV-Block Reuse)"]
+            C["Continuous Batching (Max Sequences: 64)"]
+            D["FP16 / BF16 Native ROCm Execution"]
+        end
+        
+        API["OpenAI-Compatible REST API"]
+        
+        subgraph Server [RTL-Agent Server]
+            E["FastAPI + Asynchronous Agentic Loop"]
+        end
+    end
+
+    vLLM -->|REST API| Server
+
+    style ROCm Platform fill:#1e1b4b,stroke:#312e81,stroke-width:2px,color:#fff
+    style vLLM fill:#172554,stroke:#1d4ed8,stroke-width:2px,color:#fff
+    style Server fill:#064e3b,stroke:#059669,stroke-width:2px,color:#fff
+```
+
+### Key ROCm Optimization Parameters
+Configured in `config.py` and exposed via `/api/config`:
+* **Prefix Caching (`ENABLE_PREFIX_CACHING=true`)**: Drastically reduces Time-To-First-Token (TTFT) across multi-turn reflection loops by reusing pre-computed KV caches for static architectural and system prompts.
+* **GPU Memory Utilization (`GPU_MEMORY_UTILIZATION=0.90`)**: Allocates 90% of available VRAM to KV cache buffers, enabling uninterrupted high-context synthesis.
+* **Sequence Concurrency (`MAX_NUM_SEQS=64`)**: Configures continuous batching for simultaneous multi-spec validation.
+* **Deterministic Generation (`TEMPERATURE=0.05`)**: Near-zero sampling temperature ensures deterministic, error-minimized SystemVerilog generation.
+
+---
+
+## Benchmark Results
+
+The system was evaluated against the standardized benchmark suite across representative sequential, combinational, and finite state machine designs.
+
+### Per-Design Verification Metrics
+
+| # | Specification Category | Design Name | Tier 1 Lint | Tier 2 Simulation | Iterations | Latency (s) | Throughput |
+| :- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | Sequential / Counter | 4-bit Sync Counter | **PASSED** | **PASSED** | 3 | 87.2s | 45.3 tok/s |
+| 2 | Shift Register | 8-bit SIPO Shift Register | **PASSED** | **PASSED** | 6 | 240.9s | 38.7 tok/s |
+| 3 | Combinational Multiplexer | Parameterized 2-to-1 Mux | **PASSED** | **PASSED** | 3 | 89.1s | 36.9 tok/s |
+| 4 | Finite State Machine | Traffic Light Moore FSM | **PASSED** | **PASSED** | 5 | 223.6s | 43.9 tok/s |
+| 5 | Arithmetic Logic Unit | 4-bit Combinational ALU | **PASSED** | **PASSED** | 4 | 240.2s | 35.3 tok/s |
+
+### Aggregate Summary Statistics
+* **Tier 1 Static Lint Pass Rate**: 100%
+* **Tier 2 Functional Simulation Pass Rate**: 100% (with self-correction)
+* **Average Agent Iterations per Design**: 4.2
+* **Average Generation Throughput on AMD ROCm**: 40.0 tokens/second
+* **End-to-End Autonomous Pipeline**: Zero human-in-the-loop intervention required from prompt to simulation waveform.
+
+---
+
+## Frontend Architecture
+
+The user interface is built strictly with **Vanilla HTML5, CSS3, and modern ECMAScript (ES6+)**, eliminating Node.js, Webpack, and framework overhead.
+
+* **Live Streaming Telemetry**: Server-Sent Events (SSE) deliver real-time agent reasoning thoughts, compiler outputs, Time-To-First-Token (TTFT), and generation speed.
+* **Interactive Waveform Visualizer**: Parses simulation VCD files and renders digital timing diagrams in-browser using **WaveDrom** and **D3.js**, with a built-in native SVG fallback engine.
+* **Code Workspace**: Embedded code viewer with **Highlight.js** syntax highlighting for SystemVerilog files.
+
+---
+
+## Repository Structure
+
+```text
+rtl_agent/
+├── .gitignore
+├── README.md
+├── requirements.txt            # Python dependencies (FastAPI, Uvicorn, OpenAI, etc.)
+├── config.py                   # Centralized ROCm, vLLM, and agent limits configuration
+├── agent.py                    # 3-Agent state machine and reflection loop
+├── agent_server.py             # FastAPI server and static frontend mount
+├── prompts.py                  # Domain-specific SystemVerilog prompt templates
+├── test_agent_flow.py          # Pipeline sanity validation test
+├── test_mux.py                 # End-to-end multi-agent verification test
+├── test_sim_logging.py         # Subprocess simulation logger test
+├── test_top_module.py          # Top-level testbench parser test
+├── benchmark/
+│   ├── results.json            # Machine-readable benchmark run logs
+│   ├── results.md              # Tabulated benchmark metrics
+│   ├── rocm_bench.py           # Automated ROCm benchmarking harness
+│   ├── run_benchmark.py        # Benchmark execution runner
+│   └── specs.json              # Standardized hardware design specification suite
+├── frontend/
+│   ├── index.html              # Modern dark-mode web console
+│   ├── style.css               # Responsive design system
+│   └── app.js                  # SSE client, WaveDrom integration, SVG renderer
+├── tools/
+│   ├── __init__.py
+│   ├── mock_responses.py       # Offline evaluation and test mocks
+│   ├── simulator_tool.py       # Verilator C++ binary compilation and simulation wrapper
+│   ├── sv_parser.py            # SystemVerilog extraction and normalization engine
+│   └── verilator_tool.py       # Verilator static linting wrapper
+├── scripts/
+│   ├── check_env.sh            # ROCm, Python, and Verilator environment validation script
+│   └── vllm_launch.sh          # Production vLLM ROCm startup script
+├── workspace/                  # Ephemeral SystemVerilog source files and compile targets
+└── logs/
+    └── waveforms/              # Value Change Dump (VCD) files and execution logs
 ```
 
 ---
 
-## 📊 Benchmark Results
+## Deployment Guide
 
-RTL-Agent was evaluated against a comprehensive benchmark suite spanning arithmetic, sequential pipelines, multiplexing, and finite state machines, achieving a **100% Pass Rate on Tier 1 (Syntactical Linting)** natively against Verilator's strict C++ ruleset.
+### Prerequisites
+* **Operating System**: Linux (Ubuntu 22.04 LTS recommended) or Windows 11 with WSL2.
+* **Python**: Version 3.10 or higher.
+* **EDA Tooling**: Verilator 5.0+ (`sudo apt-get install verilator`).
+* **AMD ROCm Backend**: ROCm 6.0+ with vLLM installed, or access to an OpenAI-compatible vLLM endpoint.
 
-| Benchmark Module | Architectural Complexity | Tier 1 (Lint) | Tier 2 (Sim) | Waveform Generated |
-| --- | --- | --- | --- | --- |
-| **4-bit Sync Counter** | Active-high enable, synchronous reset, overflow flag | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` |
-| **8-bit Shift Register** | Parallel load, bidirectional serial shift, serial out | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` |
-| **2-to-1 Multiplexer** | Parameterized data bus width (32-bit default) | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` |
-| **Traffic Light FSM** | Configurable phase timers, emergency override | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` |
-| **4-bit ALU** | 8 Operations (ADD, SUB, AND, OR, XOR, NOT), Flags | ✅ PASSED | ✅ PASSED | ✅ `trace.vcd` |
-
-### Run Benchmark Suite
-
+### 1. Environment Installation
+Clone the repository and install the Python dependencies:
 ```bash
-# Execute the full automated benchmark suite
+git clone [https://github.com/RKNAGA18/rtl_agent.git](https://github.com/RKNAGA18/rtl_agent.git)
+cd rtl_agent
+pip install -r requirements.txt
+```
+
+### 2. Configure Backend Mode
+Set the target deployment mode in your environment:
+```bash
+# For local AMD ROCm vLLM instance (Default)
+export DEPLOY_MODE="amd-api"
+export MODEL_NAME="DeepSeek-V4-Flash"
+export VLLM_BASE_URL="https://developer.amd.com.cn/radeon/api/v1"
+export VLLM_API_KEY="sk-[your-api-key]"
+```
+```text
+Note: These environment variables configure the application to connect via the AMD API endpoint using DeepSeek-V4-Flash. However, you are welcome to modify these parameters or swap in the configuration details of any alternative model to suit your specific deployment environment or to experiment with performance improvements.
+```
+
+### 3. Start the Server
+Run the FastAPI application entry point:
+```bash
+python agent_server.py
+```
+The server will start on `http://0.0.0.0:7860`.
+
+### 4. Access the Web Interface
+Open any modern web browser and navigate to:
+```text
+http://localhost:7860
+```
+Enter a natural language specification (e.g., *"A 4-bit synchronous binary counter with active-high synchronous reset, enable input, and overflow output"*) and click **Run Agent**.
+
+---
+
+## Verification and Testing
+
+Run the automated integration test suite to verify the end-to-end agentic workflow:
+```bash
+# Run unit test suite
+python test_top_module.py
+python test_sim_logging.py
+
+# Run end-to-end 3-Agent verification test
+python test_mux.py
+```
+
+To run the automated 5-design benchmark suite on AMD hardware:
+```bash
 python benchmark/run_benchmark.py
 ```
 
 ---
 
-## 🖥️ Frontend, Waveforms & Telemetry
+## License
 
-The RTL-Agent user interface is an engineering cockpit designed for VLSI designers:
-
-1. **3-Agent Pipeline Tracker**: Real-time status pills showing active thinking, lint status, and simulation completion.
-2. **Interactive WaveDrom Waveform Viewer**: Live SVG timing diagrams parsed directly from simulation VCD traces with signal-by-signal clock transitions.
-3. **AMD ROCm Telemetry Widget**: Live display of generation TTFT, token throughput, total context tokens, and simulation elapsed time.
-4. **Code Inspector**: SystemVerilog syntax highlighting with tabbed iteration history and download buttons.
-
----
-
-## 🏆 Hackathon Alignment (Track 2: AI Agents)
-
-| Evaluation Criterion | Implementation in RTL-Agent |
-| --- | --- |
-| **Autonomous Multi-Agent Workflow** | Linear state machine coordinating **Architect**, **Coder**, and **Verifier** with structured handoffs. |
-| **Real-World Tool Integration** | Subprocess invocation of industry-standard EDA tools: **Verilator** (`--lint-only` & `--binary`), **g++**, and VCD extractors. |
-| **Self-Correction & Reasoning** | Dual-Perspective router dynamically toggles between repairing DUT syntax and fixing flawed testbench assertions. |
-| **AMD Acceleration** | Fully powered by the AMD Radeon API leveraging DeepSeek-V4-Flash for complex hardware synthesis. |
-| **Silicon Reliability & Impact** | Catches non-synthesizable constructs, elaboration errors, and behavioral corner-case bugs before tape-out. |
+This project is developed for the **AMD AI DevMaster Hackathon 2026** under the **Apache 2.0 License**.
