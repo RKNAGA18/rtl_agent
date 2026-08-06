@@ -79,11 +79,11 @@ SEVEN GOLDEN RULES -- Verilator will reject code that violates these:
     Write the full expression instead: `count <= count + 1;`, never
     `count += 1;`.
 12. Array or struct literal initializers MUST have a leading apostrophe.
-    Write `logic [7:0] mem [3:0] = '{0,0,0,0};`, never a bare
-    `= {0,0,0,0};` -- the unquoted form is a syntax error in a declaration
-    context.
-13. NO 4-STATE LOGIC: Verilator is a 2-state simulator. Do NOT use 'X' or 'Z' states in your DUT. Do not use case equality operators (=== or !==) to check for 'X'. Assume all uninitialized registers default to 0.
-14. NO LATCHES: Inside always_comb blocks, every variable must be assigned a default value or assigned in all possible branches (include 'else' and 'default' statements) to prevent inferred latches.
+    SystemVerilog array, unpacked array, and struct literals MUST begin with an apostrophe (e.g., `'{8'h00, 8'hFF}`), not just bare brackets `= {8'h00, 8'hFF};` which is a syntax error.
+13. NO 4-STATE LOGIC (2-STATE SIMULATOR):
+    Verilator is a 2-state simulator. Do not assign `1'bx` or `1'bz`. Do not use case equality operators (=== or !==) to check for 'X'. Explicitly initialize all internal registers and state machine variables to `0` during a reset condition.
+14. NO INFERRED LATCHES:
+    Never infer latches. All `always_comb` blocks must have a complete `default` case or initialize every output at the top of the block. If using a `case` statement, every possible state must be explicitly handled or covered by a `default`.
 15. NO DUT DELAYS: Never use time delays (e.g., #5) inside the Design Under Test (DUT). Delays are strictly forbidden in synthesizable RTL. Delays are strictly for the Testbench.
 16. SYNCHRONOUS RESET: For synchronous reset (the default), the sensitivity list of `always_ff` MUST ONLY be `@(posedge clk)`. NEVER write `always_ff @(posedge clk or posedge rst)` as that creates an asynchronous reset and will fail synchronous reset verification. Inside the block, write: `if (rst) ... else ...`.
 17. ARITHMETIC ALU RULES:
@@ -298,16 +298,13 @@ Rules:
 5. On all checks passing: $display("PASS: all checks passed"); $finish;
 6. Include a cycle-bounded watchdog that calls $fatal("FAIL: timeout") if
    the simulation hangs.
-7. CLOCK GENERATION RULE (critical -- Verilator syntax):
-   Any arithmetic expression after a delay control (#) MUST be wrapped in
-   parentheses. Write:
-       forever #(CLK_PERIOD/2) clk = ~clk;
-   NEVER write:
-       forever #CLK_PERIOD / 2 clk = ~clk;   // syntax error in Verilator
-   Use a localparam for the period:
+7. CLOCK GENERATION & ISOLATION (critical -- Verilator syntax):
+   - Clock generation must be isolated in its own concurrent block:
        localparam CLK_PERIOD = 10;
        initial clk = 0;
        always #(CLK_PERIOD/2) clk = ~clk;
+     Do NOT place the clock toggle loop inside the main stimulus `initial` block.
+   - Any arithmetic expression after a delay control (#) MUST be wrapped in parentheses: `#(CLK_PERIOD/2)`.
 8. NEVER use compound assignment operators (+=, -=, etc.) anywhere in the
    testbench either. Write the full expression.
 9. Array/struct literal initializers need a leading apostrophe: `'{...}`,
@@ -317,7 +314,8 @@ Rules:
 
 CRITICAL SIMULATION RULES FOR SYSTEMVERILOG TESTBENCHES:
 12. SIGNAL INITIALIZATION: Always initialize all DUT inputs to 0 or appropriate idle states at time #0 before asserting the reset signal.
-13. CLOCK SYNCHRONIZATION: Never evaluate outputs at the exact same time step the clock edge transitions. Wait for #1 or the negative edge (@(negedge clk)) to sample outputs to prevent Delta-Cycle race conditions.
+13. RACE CONDITION / SAMPLING SAFETY:
+    Drive stimulus and sample outputs safely to avoid delta-cycle race conditions. ALWAYS drive inputs on the falling edge (`@(negedge clk);`) or use non-blocking assignments. ALWAYS evaluate `$display` or `$fatal` assertions on the falling edge AFTER the outputs have settled. Never sample outputs at the exact posedge of clk without a delay.
 14. TIMING TIMEOUTS: Include a sufficient delay (#1000 or higher) before $finish to ensure multi-cycle operations (like serial TX/RX or FSMs) have time to complete.
 15. NON-BLOCKING ASSIGNMENTS: Inside the DUT, strictly use non-blocking assignments (<=) for sequential logic and blocking assignments (=) for combinational logic.
 16. ASSERTS: Use $display and $fatal to clearly log exactly which cycle or state failed, printing both the Expected and Got values (e.g. $display("FAIL: Expected 0x%h, Got 0x%h", expected, actual); $fatal;).
@@ -335,10 +333,11 @@ CRITICAL SIMULATION RULES FOR SYSTEMVERILOG TESTBENCHES:
       $finish;
     end
     This allows the simulation to run through all test cases to completion and report all logical flaws across all cycles at once.
-24. SYNCHRONOUS RESET SAMPLING: Synchronous reset takes effect on posedge clk. Drive reset for >= 2 clock cycles, then deassert at @(negedge clk). Do NOT assert reset mid-cycle and expect immediate combinational clearing.
+24. ACTIVE-LOW & SYNCHRONOUS RESET CONVENTIONS:
+    If the DUT has a reset named `rst_n`, `aresetn`, `reset_n`, or `rst_l`, it is ACTIVE-LOW. Your testbench must start by driving `rst_n = 0`, waiting at least 2 clock cycles, and then driving `rst_n = 1` to release the reset. For active-high `rst`, drive `rst = 1` for >= 2 cycles, then deassert `rst = 0` at `@(negedge clk)`.
 25. ALU SUBTRACTION CONVENTIONS: For ALU subtraction (a - b): expect `carry_out` (borrow flag) to be 1 when `a < b` (underflow), and 0 when `a >= b`. Expect `zero` to be 1 when `result == '0`.
 26. STRICT SYNTAX & CONCISE CODE: All `$display` and `$fatal` calls must have perfectly matched quotes and parentheses. Keep testbenches concise (< 120 lines) to prevent unexpected EOF truncation.
-27. NO TASKS OR FUNCTIONS: DO NOT declare any `task ... endtask` or `function ... endfunction` in the testbench. All test stimulus, resets, `@(negedge clk)` waits, and assertion checks MUST be written linearly inside a single main `initial begin ... end` block. This completely eliminates nested task and duplicate declaration errors.
+27. NO TASKS OR FUNCTIONS: DO NOT use `task` or `function` declarations inside the testbench. Write all stimulus linearly inside a single `initial begin ... end` block to guarantee Verilator structural compatibility.
 28. VARIABLE DECLARATIONS: Declare all loop indices (e.g. `int i;`, `int cycle;`) and test variables at the top of the testbench module. Never use undeclared variables.
 29. ARRAY LITERAL PATTERNS: Array initializers MUST use the tick syntax `'{...}` (e.g., `logic [7:0] expected_data [0:3] = '{8'h01, 8'h02, 8'h03, 8'h04};`).
 30. MULTIPLEXER TEST STIMULUS:
@@ -346,27 +345,8 @@ CRITICAL SIMULATION RULES FOR SYSTEMVERILOG TESTBENCHES:
     - Assign distinct, non-zero values to all data inputs (e.g. `in0 = 8'h11; in1 = 8'h22; in2 = 8'h33; in3 = 8'h44;`).
     - Verify each valid binary select `sel = 0, 1, 2, ...` outputs its respective input channel.
     - Do NOT assert contradictory or arbitrary "default case" expected values that contradict standard binary port indexing.
-
-MANDATORY VCD RULES (violating these will cause test failure):
-1. Every testbench module MUST contain this exact initial block:
-   initial begin
-     $dumpfile("trace.vcd");
-     $dumpvars(0, <top_module_name>);
-   end
-   Replace <top_module_name> with the actual testbench module name.
-
-2. Every testbench MUST include a simulation timeout guard:
-   initial begin
-     #100000;
-     $display("TIMEOUT: simulation exceeded time limit");
-     $fatal(1, "FAIL: simulation timeout");
-   end
-   This prevents infinite loops and keeps VCD files under 100KB.
-
-3. Do NOT use #delays larger than 100 in any single statement.
-   Use loops with small delays instead.
-3.Pipeline Latency Synchronization 
-"When testing registered or pipelined designs (e.g., designs with `out_valid` or internal `_reg` stages), the testbench MUST account for the exact pipeline depth. You must insert the correct number of clock cycles (e.g., `repeat(2) @(posedge clk);`) between driving the stimulus and asserting the expected output. Alternatively, use a FIFO scoreboard or wait for `out_valid == 1'b1` before checking the data."
+31. PIPELINE LATENCY SYNCHRONIZATION:
+    When testing registered or pipelined designs (e.g., designs with `out_valid` or internal `_reg` stages), the testbench MUST account for the exact pipeline depth. You must insert the correct number of clock cycles (e.g., `repeat(2) @(posedge clk);`) between driving the stimulus and asserting the expected output. Alternatively, use a FIFO scoreboard or wait for `out_valid == 1'b1` before checking the data.
 """
 
 
@@ -455,17 +435,18 @@ This is a BEHAVIORAL bug, not a syntax error.
  BEHAVIORAL BUG -- CORRECTION INSTRUCTIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Read the exact FAIL message from the simulation output above.
-2. Identify the root cause (edge sensitivity, reset polarity, off-by-one,
-   overflow handling, FSM timing, output registered vs combinational).
-3. For serial protocols (e.g. UART TX): ensure the stop bit (1'b1) is held
-   for the FULL final baud period before transitioning back to IDLE.
+2. Specific failure diagnostics and heuristics:
+   - If the log says 'Reset mid-op ... expected 00' or fails reset clearing, your DUT failed to clear all internal registers on reset. Ensure your `always_ff` reset block zeros out every single `_reg`, state variable, counter, and `_valid` signal.
+   - If the log shows subtraction carry/borrow errors, remember: `carry_out = (a < b) ? 1'b1 : 1'b0` (or `{{carry_out, result}} = {{1'b0, a}} - {{1'b0, b}}`). Ensure your subtraction borrow flag matches expectation.
+   - If the log complains about simultaneous read/write in a FIFO, explicitly handle the `2'b11` case where `wr_en` and `rd_en` are both high by leaving the `count` unchanged.
+   - For serial protocols (e.g. UART TX): ensure the stop bit (1'b1) is held for the FULL final baud period before transitioning back to IDLE.
+3. Identify the root cause (edge sensitivity, reset polarity, off-by-one, overflow handling, FSM timing, output registered vs combinational).
 4. Output the ENTIRE corrected module -- do NOT output partial fixes or diffs.
 
 Original specification:
 {spec.strip()}
 
 Output ONLY the ```verilog block. No text before or after it.
-
 """
 
 
@@ -598,9 +579,11 @@ Common testbench verification pitfalls to check and correct:
 10. FIFO SIMULTANEOUS R/W EXPECTATION:
    When both wr_en and rd_en are asserted on the same clock cycle, expect `count` to remain unchanged. Sample outputs at `@(negedge clk)`.
 11. MULTIPLEXER STIMULUS & EXPECTATION:
-   Assign distinct, non-zero values to all input ports. Test each binary select value `sel = 0, 1, 2, ...` against its corresponding input channel. Do NOT assert arbitrary "default case" values that contradict standard binary port selection.
-12. Off-By-One Latency Diagnostics
-"If the simulation output shows a cascading failure where actual values lag expected values by exactly 1 or 2 cycles (e.g., Cycle N actual == Cycle N-1 expected), your testbench is checking assertions too early. Adjust your clock cycle delays (`repeat(X) @(posedge clk)`) to match the DUT's pipeline latency before sampling."
+   If a Multiplexer testbench fails on a 'default case', check your stimulus. Do NOT assert distinct arbitrary values for a default state if the DUT maps the default directly to `in0` or `'0`. Test only the valid binary select indices `sel = 0, 1, 2, ...` against corresponding inputs.
+12. PIPELINE & OFF-BY-ONE LATENCY CHECKING:
+   If the actual output at cycle N perfectly matches the expected output at cycle N-1 (or shows a cascading 1-2 cycle lag), your testbench is checking a pipelined/registered design too early. Adjust your clock cycle delays (`repeat(X) @(negedge clk);`) to match the DUT's pipeline latency before checking assertions.
+13. VARIABLE DECLARATION COMPLIANCE:
+   If the log says "Can't find definition of variable", you attempted to use a loop variable like `i` or `cycle` without declaring it. Declare `int i;` and `int cycle;` at the top of your testbench module.
 
 Output ONLY the corrected ```verilog testbench block. Do NOT modify or output the DUT.
 """
