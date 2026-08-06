@@ -63,7 +63,7 @@ _sessions: Dict[str, dict] = {}
 
 # ─── Pydantic Models ──────────────────────────────────────────────────────────
 class RunRequest(BaseModel):
-    spec: str = Field(..., min_length=10, description="Natural-language hardware specification")
+    spec: str = Field(..., min_length=1, description="Natural-language hardware specification")
     max_iterations: Optional[int] = Field(None, ge=1, le=10)
 
 
@@ -128,6 +128,11 @@ async def _run_agent_task(spec: str, session_id: str, max_iter: int):
 @app.post("/api/run", response_model=RunResponse)
 async def run_agent(req: RunRequest, background_tasks: BackgroundTasks):
     """Launch a new two-tier agent session for the given hardware specification."""
+    if len(req.spec.strip()) < 5:
+        raise HTTPException(
+            status_code=422,
+            detail="Specification is too short. Please enter more than 5 characters to describe your hardware design."
+        )
     session_id = str(uuid.uuid4())
     max_iter = req.max_iterations or MAX_ITERATIONS
 

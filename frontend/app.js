@@ -110,6 +110,11 @@ async function handleRun() {
     specInput.focus();
     return;
   }
+  if (spec.length < 5) {
+    toast('Specification is too short. Please enter more than 5 characters.', 'warning');
+    specInput.focus();
+    return;
+  }
   if (state.sseSource) {
     state.sseSource.close();
     state.sseSource = null;
