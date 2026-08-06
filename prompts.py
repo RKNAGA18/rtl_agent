@@ -272,8 +272,6 @@ SEVEN GOLDEN RULES -- do not violate these in your fix:
     including in the port list (`output logic`, not bare `output`).
   - NEVER nest replication operators. Use a loop:
     `for (int i = 0; i < DEPTH; i++) mem[i] = '0;`
-  - NEVER use decimal digits (7, 8, 9) inside a binary literal.
-    `4'b7` is an illegal character error. Use `4'd7` or `4'b0111`.
   - NEVER use compound assignment operators (+=, -=, etc.). Write the full
     expression: `count <= count + 1;`.
   - Array/struct literals need a leading apostrophe: `'{{0,0,0,0}}`, not `{{0,0,0,0}}`.
@@ -294,17 +292,17 @@ Rules:
 2. No text before or after the code block.
 3. The testbench is simulation-only. You MAY use:
    #<delay>, initial, $display, $fatal, $finish, $random.
-4. On any mismatch: $display("FAIL: <reason>"); $fatal;
+4. On any mismatch: $display("FAIL: <reason>");
 5. On all checks passing: $display("PASS: all checks passed"); $finish;
 6. Include a cycle-bounded watchdog that calls $fatal("FAIL: timeout") if
    the simulation hangs.
 7. CLOCK GENERATION & ISOLATION (critical -- Verilator syntax):
-   - Clock generation must be isolated in its own concurrent block:
+   Clock generation must be isolated in its own concurrent block:
        localparam CLK_PERIOD = 10;
        initial clk = 0;
        always #(CLK_PERIOD/2) clk = ~clk;
-     Do NOT place the clock toggle loop inside the main stimulus `initial` block.
-   - Any arithmetic expression after a delay control (#) MUST be wrapped in parentheses: `#(CLK_PERIOD/2)`.
+   Do NOT place the clock toggle loop inside the main stimulus `initial` block.
+   Any arithmetic expression after a delay control (#) MUST be wrapped in parentheses.
 8. NEVER use compound assignment operators (+=, -=, etc.) anywhere in the
    testbench either. Write the full expression.
 9. Array/struct literal initializers need a leading apostrophe: `'{...}`,
@@ -315,10 +313,10 @@ Rules:
 CRITICAL SIMULATION RULES FOR SYSTEMVERILOG TESTBENCHES:
 12. SIGNAL INITIALIZATION: Always initialize all DUT inputs to 0 or appropriate idle states at time #0 before asserting the reset signal.
 13. RACE CONDITION / SAMPLING SAFETY:
-    Drive stimulus and sample outputs safely to avoid delta-cycle race conditions. ALWAYS drive inputs on the falling edge (`@(negedge clk);`) or use non-blocking assignments. ALWAYS evaluate `$display` or `$fatal` assertions on the falling edge AFTER the outputs have settled. Never sample outputs at the exact posedge of clk without a delay.
+    Drive stimulus and sample outputs safely to avoid delta-cycle race conditions. ALWAYS drive inputs on the falling edge (`@(negedge clk);`). ALWAYS evaluate `$display` or `$fatal` assertions on the falling edge AFTER the outputs have settled. Never sample outputs at the exact posedge of clk without a delay.
 14. TIMING TIMEOUTS: Include a sufficient delay (#1000 or higher) before $finish to ensure multi-cycle operations (like serial TX/RX or FSMs) have time to complete.
 15. NON-BLOCKING ASSIGNMENTS: Inside the DUT, strictly use non-blocking assignments (<=) for sequential logic and blocking assignments (=) for combinational logic.
-16. ASSERTS: Use $display and $fatal to clearly log exactly which cycle or state failed, printing both the Expected and Got values (e.g. $display("FAIL: Expected 0x%h, Got 0x%h", expected, actual); $fatal;).
+16. ASSERTS: Use $display to clearly log exactly which cycle or state failed, printing both the Expected and Got values. Do not immediately $fatal on the first error; instead, tally errors in an integer counter. At the end of the simulation, check the counter. This allows the simulation to run through all test cases to completion and report all logical flaws across all cycles at once.
 17. SINGLE-CYCLE PULSES & OVERFLOW: When checking single-cycle pulse outputs (such as `overflow`, `done`, `valid`, `tx_done`), assert expectation for exactly ONE clock cycle when the event occurs. Do NOT expect the pulse to persist across two consecutive clock cycles. E.g. in a 4-bit counter wrapping from 15 to 0, `overflow` is asserted for exactly 1 cycle on the wrap, not held for multiple cycles.
 18. STATE & CYCLE TRACKING: Your reference model must match synchronous hardware registered cycles. In synchronous sequential logic, state changes happen on posedge clk and outputs become visible immediately after. Always sample on `@(negedge clk)` after the corresponding posedge.
 19. NO 4-STATE LOGIC: Verilator is a 2-state simulator. Do NOT use 'X' or 'Z' states in your DUT or Testbench. Do not use case equality operators (=== or !==) to check for 'X'. Assume all uninitialized registers default to 0.
@@ -334,10 +332,10 @@ CRITICAL SIMULATION RULES FOR SYSTEMVERILOG TESTBENCHES:
     end
     This allows the simulation to run through all test cases to completion and report all logical flaws across all cycles at once.
 24. ACTIVE-LOW & SYNCHRONOUS RESET CONVENTIONS:
-    If the DUT has a reset named `rst_n`, `aresetn`, `reset_n`, or `rst_l`, it is ACTIVE-LOW. Your testbench must start by driving `rst_n = 0`, waiting at least 2 clock cycles, and then driving `rst_n = 1` to release the reset. For active-high `rst`, drive `rst = 1` for >= 2 cycles, then deassert `rst = 0` at `@(negedge clk)`.
+    If the DUT has a reset named `rst_n`, `aresetn`, `reset_n`, or `rst_l`, it is ACTIVE-LOW. Your testbench must start by driving `rst_n = 0`, waiting at least 2 clock cycles, and then driving `rst_n = 1` to release the reset. For active-high `rst`, drive `rst = 1` for >= 2 cycles, then deassert `rst = 0` at `@(negedge clk)`. Do NOT assert reset mid-cycle and expect immediate combinational clearing.
 25. ALU SUBTRACTION CONVENTIONS: For ALU subtraction (a - b): expect `carry_out` (borrow flag) to be 1 when `a < b` (underflow), and 0 when `a >= b`. Expect `zero` to be 1 when `result == '0`.
 26. STRICT SYNTAX & CONCISE CODE: All `$display` and `$fatal` calls must have perfectly matched quotes and parentheses. Keep testbenches concise (< 120 lines) to prevent unexpected EOF truncation.
-27. NO TASKS OR FUNCTIONS: DO NOT use `task` or `function` declarations inside the testbench. Write all stimulus linearly inside a single `initial begin ... end` block to guarantee Verilator structural compatibility.
+27. NO TASKS OR FUNCTIONS: DO NOT declare any `task ... endtask` or `function ... endfunction` in the testbench. All test stimulus, resets, `@(negedge clk)` waits, and assertion checks MUST be written linearly inside a single main `initial begin ... end` block. This completely eliminates nested task and duplicate declaration errors in Verilator.
 28. VARIABLE DECLARATIONS: Declare all loop indices (e.g. `int i;`, `int cycle;`) and test variables at the top of the testbench module. Never use undeclared variables.
 29. ARRAY LITERAL PATTERNS: Array initializers MUST use the tick syntax `'{...}` (e.g., `logic [7:0] expected_data [0:3] = '{8'h01, 8'h02, 8'h03, 8'h04};`).
 30. MULTIPLEXER TEST STIMULUS:
@@ -377,34 +375,35 @@ def build_testbench_prompt(spec: str, dut_code: str, architect_plan: str = "") -
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Instantiate the DUT connecting ALL ports by name.
 2. SIGNAL INITIALIZATION: Initialize all DUT inputs to 0 or appropriate idle states at time #0 before asserting reset.
-3. Drive a 10ns clock and synchronous active-high reset (hold >= 3 cycles).
+3. Drive a 10ns clock (in an isolated block: `initial clk = 0; always #(CLK_PERIOD/2) clk = ~clk;`) and handle reset polarity (active-high `rst=1` -> `0`, or active-low `rst_n=0` -> `1`, hold >= 2 cycles).
 4. CLOCK SYNCHRONIZATION: Never sample outputs at the exact posedge of clk. Wait for #1 or @(negedge clk) before checking outputs with if (actual !== expected) to prevent delta-cycle race conditions.
-5. Apply at least 3 distinct stimulus cases (and cover Architect's test scenarios):
+5. Apply at least 3 distinct stimulus cases:
    - Reset behavior (outputs reach known state)
    - Normal operation (primary functional path)
    - Edge/boundary case (overflow, max/min, wraparound)
-6. REALISTIC LOOP BOUNDS: Limit all testbench loops to <= 256 iterations to prevent simulation timeouts.
-7. 2-STATE COMPLIANCE: Do not check for 'X' or 'Z' or use '===' against 'X'. Verilator operates in 2-state logic.
-8. SOFT FAIL ERROR ACCUMULATION: Declare `int errors = 0;` at the top. On any mismatch, log the error with $display and increment `errors++;`. Do NOT immediately call $fatal.
-9. FINAL VERDICT: At the conclusion of all test vectors:
+6. PIPELINE LATENCY: When testing registered/pipelined designs, insert appropriate clock cycle delays (`repeat(X) @(posedge clk);`) before checking outputs.
+7. REALISTIC LOOP BOUNDS: Limit all testbench loops to <= 256 iterations to prevent simulation timeouts.
+8. 2-STATE COMPLIANCE: Do not check for 'X' or 'Z' or use '===' against 'X'. Verilator operates in 2-state logic.
+9. SOFT FAIL ERROR ACCUMULATION: Declare `int errors = 0;` at the top. On any mismatch, log the error with $display and increment `errors++;`. Do NOT immediately call $fatal.
+10. FINAL VERDICT: At the conclusion of all test vectors:
    if (errors > 0) begin
      $fatal(1, "SIMULATION FAILED with %0d error(s)", errors);
    end else begin
      $display("PASS: all checks passed");
      $finish;
    end
-10. MANDATORY VCD DUMP:
+11. MANDATORY VCD DUMP:
    initial begin
      $dumpfile("trace.vcd");
      $dumpvars(0, tb_module);
    end
-11. MANDATORY simulation timeout guard:
+12. MANDATORY simulation timeout guard:
    initial begin
      #100000;
      $display("TIMEOUT: simulation exceeded time limit");
      $fatal(1, "FAIL: simulation timeout");
    end
-12. Module name must start with `tb_`. Use `logic` for all signals. No duplicate signal declarations.
+13. Module name must start with `tb_`. Use `logic` for all signals. No duplicate signal declarations. No task/function declarations.
 
 Output ONLY the ```verilog block.
 """
