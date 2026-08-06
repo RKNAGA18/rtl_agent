@@ -1100,31 +1100,43 @@ function downloadVCD() {
   URL.revokeObjectURL(url);
 }
 
-function vcdToWaveDrom(vcdText, maxCycles = 20) {
+function vcdToWaveDrom(vcdText, maxCycles = 24) {
   if (!vcdText) return null;
   const lines = vcdText.split('\n');
-  const signals = {}; // id -> { name, type, width }
+  const signals = {}; // id -> { name, type, width, isTop }
+  const ignoredNames = new Set(['data_width', 'sel_width', 'clk_period', 'errors', 'cycle_count', 'i', 'j', 'k', 'unnamedblk1', 'unnamedblk2']);
 
-  // Pass 1: Parse variable declarations
+  // Pass 1: Parse variable declarations and scopes
+  let currentScope = '';
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed.startsWith('$var')) {
+    if (trimmed.startsWith('$scope')) {
+      const parts = trimmed.split(/\s+/);
+      if (parts.length >= 3) currentScope = parts[2];
+    } else if (trimmed.startsWith('$upscope')) {
+      currentScope = '';
+    } else if (trimmed.startsWith('$var')) {
       const parts = trimmed.split(/\s+/);
       // Format: $var <type> <width> <id> <name> [bounds] $end
-      // Format: $var <type> <width> <id> <name> [bounds] $end
-        if (parts.length >= 5) {
-          const type = parts[1];
-          const width = parseInt(parts[2], 10) || 1;
-          const id = parts[3];
-          
-          // Join remaining parts and strip out trailing array brackets like [31:0]
-          const rawName = parts.slice(4, -1).join(" "); 
-          const cleanName = rawName.replace(/\s*\[.*?\]/g, ""); 
-          
-          signals[id] = { name: cleanName, type, width, wave: [], values: [] };
+      if (parts.length >= 5) {
+        const type = parts[1];
+        const width = parseInt(parts[2], 10) || 1;
+        const id = parts[3];
+        const rawName = parts.slice(4, -1).join(' ').trim();
+        const cleanName = rawName.replace(/\s*\[.*?\]/g, '').trim();
+        const lowerName = cleanName.toLowerCase();
+
+        // Ignore compiler temp indices, parameters, and debug counts
+        if (ignoredNames.has(lowerName) || cleanName.startsWith('__')) {
+          continue;
         }
-    }
-    if (trimmed.startsWith('$enddefinitions')) {
+
+        // If duplicate ID exists, prefer top-level DUT port or shorter name
+        if (!signals[id] || (!cleanName.includes('_reg') && signals[id].name.includes('_reg'))) {
+          signals[id] = { name: cleanName, type, width, wave: [], values: [], isTop: !currentScope.includes('unnamed') };
+        }
+      }
+    } else if (trimmed.startsWith('$enddefinitions')) {
       break;
     }
   }
@@ -1172,8 +1184,8 @@ function vcdToWaveDrom(vcdText, maxCycles = 20) {
         if (signalHistory[id]) {
           let hexVal;
           try {
-            hexVal = parseInt(rawVal, 2).toString(16).toUpperCase();
-            if (isNaN(parseInt(rawVal, 2))) hexVal = rawVal;
+            const intVal = parseInt(rawVal, 2);
+            hexVal = !isNaN(intVal) ? intVal.toString(16).toUpperCase() : rawVal;
           } catch (_) {
             hexVal = rawVal;
           }
@@ -1183,15 +1195,28 @@ function vcdToWaveDrom(vcdText, maxCycles = 20) {
     }
   }
 
-  // Sample into uniform cycle slots (up to maxCycles)
+  // Sample into uniform cycle slots
   const uniqueTimes = [...new Set(timeSteps)].sort((a, b) => a - b).slice(0, maxCycles * 2);
-  const sampleTimes = uniqueTimes.length > 0 ? uniqueTimes : [0, 5, 10, 15, 20, 25, 30, 35];
+  const sampleTimes = uniqueTimes.length > 0 ? uniqueTimes : [0, 5000, 10000, 15000, 20000, 25000, 30000, 35000];
+
+  // Prioritize signal display order: clk, rst, inputs, outputs
+  const sortedIds = sigIds.sort((a, b) => {
+    const na = signals[a].name.toLowerCase();
+    const nb = signals[b].name.toLowerCase();
+    const getRank = (name) => {
+      if (name.includes('clk') || name.includes('clock')) return 0;
+      if (name.includes('rst') || name.includes('reset')) return 1;
+      if (name.includes('sel') || name.includes('en') || name.includes('valid')) return 2;
+      if (name.startsWith('in') || name.includes('din') || name === 'a' || name === 'b') return 3;
+      if (name.startsWith('out') || name.includes('dout') || name.includes('result') || name.includes('count')) return 4;
+      return 5;
+    };
+    return getRank(na) - getRank(nb);
+  });
 
   const waveLanes = [];
-  for (const [id, sig] of Object.entries(signals)) {
-    // Filter out internal verilator signals starting with '__' or '_' if many signals
-    if (sig.name.startsWith('_') && sigIds.length > 6) continue;
-
+  for (const id of sortedIds) {
+    const sig = signals[id];
     let waveStr = '';
     const dataVals = [];
     let lastVal = 'x';
@@ -1231,6 +1256,65 @@ function vcdToWaveDrom(vcdText, maxCycles = 20) {
   };
 }
 
+function renderSvgFallback(waveJson, target) {
+  if (!waveJson || !waveJson.signal || !target) return;
+  const signals = waveJson.signal;
+  const stepWidth = 32;
+  const laneHeight = 36;
+  const labelWidth = 90;
+  const numSteps = signals[0]?.wave?.length || 16;
+  const totalWidth = labelWidth + (numSteps * stepWidth) + 40;
+  const totalHeight = 40 + (signals.length * laneHeight) + 30;
+
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${totalWidth} ${totalHeight}" style="width:100%;max-width:${totalWidth}px;height:auto;font-family:'JetBrains Mono',monospace;font-size:12px;background:#0d1117;border-radius:8px;padding:8px;">`;
+  
+  // Header
+  svg += `<text x="${labelWidth}" y="24" fill="#58a6ff" font-weight="600" font-size="13">${waveJson.head?.text || 'Simulation Waveform'}</text>`;
+
+  // Grid lines
+  for (let s = 0; s < numSteps; s++) {
+    const x = labelWidth + (s * stepWidth);
+    svg += `<line x1="${x}" y1="35" x2="${x}" y2="${totalHeight - 20}" stroke="#21262d" stroke-width="1" stroke-dasharray="2,2"/>`;
+    svg += `<text x="${x + stepWidth/2}" y="${totalHeight - 6}" fill="#8b949e" font-size="10" text-anchor="middle">${s}</text>`;
+  }
+
+  // Signal lanes
+  signals.forEach((sig, idx) => {
+    const y = 50 + (idx * laneHeight);
+    svg += `<text x="${labelWidth - 10}" y="${y + 16}" fill="#e6edf3" font-weight="500" text-anchor="end">${sig.name}</text>`;
+
+    let dataIdx = 0;
+    let currVal = '0';
+    for (let s = 0; s < sig.wave.length; s++) {
+      const char = sig.wave[s];
+      const x = labelWidth + (s * stepWidth);
+      const isClk = sig.wave.includes('p');
+
+      if (isClk) {
+        // Clock pulse
+        svg += `<path d="M ${x} ${y + 24} L ${x + stepWidth/2} ${y + 6} L ${x + stepWidth} ${y + 24}" fill="none" stroke="#7ee787" stroke-width="2"/>`;
+      } else if (char === '1' || (char === '.' && currVal === '1')) {
+        currVal = '1';
+        svg += `<line x1="${x}" y1="${y + 6}" x2="${x + stepWidth}" y2="${y + 6}" stroke="#79c0ff" stroke-width="2"/>`;
+      } else if (char === '0' || (char === '.' && currVal === '0')) {
+        currVal = '0';
+        svg += `<line x1="${x}" y1="${y + 24}" x2="${x + stepWidth}" y2="${y + 24}" stroke="#79c0ff" stroke-width="2"/>`;
+      } else if (char === '=') {
+        const valText = sig.data ? (sig.data[dataIdx++] || '') : '';
+        svg += `<polygon points="${x+2},${y+15} ${x+6},${y+6} ${x+stepWidth-6},${y+6} ${x+stepWidth-2},${y+15} ${x+stepWidth-6},${y+24} ${x+6},${y+24}" fill="#1f293d" stroke="#d2a8ff" stroke-width="1.5"/>`;
+        if (valText) {
+          svg += `<text x="${x + stepWidth/2}" y="${y + 19}" fill="#f0f6fc" font-size="10" text-anchor="middle">${valText}</text>`;
+        }
+      } else {
+        svg += `<line x1="${x}" y1="${y + 15}" x2="${x + stepWidth}" y2="${y + 15}" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="3,3"/>`;
+      }
+    }
+  });
+
+  svg += `</svg>`;
+  target.innerHTML = svg;
+}
+
 function renderWaveform(vcdText) {
   const placeholder = $('waveform-placeholder');
   const target = $('wavedrom-target');
@@ -1259,13 +1343,24 @@ function renderWaveform(vcdText) {
     if (target) {
       target.style.display = 'block';
       target.innerHTML = '';
-      const script = document.createElement('script');
-      script.type = 'WaveDrom';
-      script.textContent = JSON.stringify(waveJson);
-      target.appendChild(script);
-      if (window.WaveDrom && typeof WaveDrom.ProcessAll === 'function') {
-        WaveDrom.ProcessAll();
+
+      // Check if WaveDrom and WaveSkin are fully loaded
+      const hasWaveSkin = typeof window.WaveSkin !== 'undefined' && window.WaveSkin && window.WaveSkin.default;
+      if (window.WaveDrom && hasWaveSkin) {
+        try {
+          const script = document.createElement('script');
+          script.type = 'WaveDrom';
+          script.textContent = JSON.stringify(waveJson);
+          target.appendChild(script);
+          WaveDrom.ProcessAll();
+          return;
+        } catch (wdErr) {
+          console.warn('WaveDrom ProcessAll error, falling back to SVG renderer:', wdErr);
+        }
       }
+
+      // Native crisp SVG Waveform fallback
+      renderSvgFallback(waveJson, target);
     }
   } catch (err) {
     console.warn('WaveDrom render failed:', err);
