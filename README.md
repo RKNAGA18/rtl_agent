@@ -2,7 +2,11 @@
 
 **Participant:** R. Naga Arjun | Vellore Institute of Technology, Chennai  
 **Track:** Track 2: Agentic AI  
-**Project:** Autonomous RTL Generation, Static Linting, Functional Simulation, and Digital Waveform Analysis  
+**Project:** Autonomous RTL Generation, Static Linting, Functional Simulation, and Digital Waveform Analysis 
+
+- [📄 Read the Full Project Specification](docs/Project_Specification.pdf)
+- [📊 View the Pitch Deck](docs/Pitch_Deck.pdf)
+- [🎥 Watch the Demo Video](https://www.youtube.com/watch?v=AHY-smP2EEU)
 
 <div align="center">
 
@@ -170,6 +174,8 @@ The user interface is built strictly with **Vanilla HTML5, CSS3, and modern ECMA
 ```text
 rtl_agent/
 ├── .gitignore
+│   ├── Pitch_Deck.pdf          
+│   └── Project_Specification.pdf 
 ├── README.md
 ├── requirements.txt            # Python dependencies (FastAPI, Uvicorn, OpenAI, etc.)
 ├── config.py                   # Centralized ROCm, vLLM, and agent limits configuration
